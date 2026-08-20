@@ -1,0 +1,251 @@
+{
+  "report_id": "expert-eval-plugin-test-20260803-234323",
+  "generated_at": "2026-08-03T15:43:23.495311+00:00",
+  "environment": {
+    "platform": "win32",
+    "python": "3.13.11",
+    "promptfoo": "0.121.20",
+    "repo_root": "C:\\project\\mobile_intern\\mobilework-expert-eval-plugin"
+  },
+  "stats": {
+    "pass": 29,
+    "fail": 0,
+    "blocked": 0,
+    "skipped": 0
+  },
+  "total": 29,
+  "results": [
+    {
+      "id": "S01",
+      "category": "S",
+      "name": "plugin.json 合法且字段齐全",
+      "status": "pass",
+      "detail": "name=promptfoo-expert-eval skills=./skills/",
+      "duration_ms": 0.3
+    },
+    {
+      "id": "S02",
+      "category": "S",
+      "name": "marketplace.json 双插件声明",
+      "status": "pass",
+      "detail": "本插件 x1 / 公共 manager x1",
+      "duration_ms": 0.2
+    },
+    {
+      "id": "S03",
+      "category": "S",
+      "name": "default-cases.yaml 合法 YAML",
+      "status": "pass",
+      "detail": "4 个 case",
+      "duration_ms": 5.5
+    },
+    {
+      "id": "S04",
+      "category": "S",
+      "name": "run_eval.py 语法检查",
+      "status": "pass",
+      "detail": "ast.parse OK",
+      "duration_ms": 6.7
+    },
+    {
+      "id": "S05",
+      "category": "S",
+      "name": "SKILL.md frontmatter",
+      "status": "pass",
+      "detail": "name=promptfoo-expert-eval",
+      "duration_ms": 0.7
+    },
+    {
+      "id": "S06",
+      "category": "S",
+      "name": "关键目录结构完整",
+      "status": "pass",
+      "detail": "8 个关键文件齐全",
+      "duration_ms": 0.1
+    },
+    {
+      "id": "S07",
+      "category": "S",
+      "name": "case schema（字段/类型/断言/占位符）",
+      "status": "pass",
+      "detail": "4 个 case 字段/断言类型全部合法",
+      "duration_ms": 5.2
+    },
+    {
+      "id": "S08",
+      "category": "S",
+      "name": "references 文档存在",
+      "status": "pass",
+      "detail": "case-schema.md + methodology.md",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "F10",
+      "category": "F",
+      "name": "--list 列出 4 个内置 case",
+      "status": "pass",
+      "detail": "rc=0, 4 个 case 均在输出中",
+      "duration_ms": 89.9
+    },
+    {
+      "id": "F11",
+      "category": "F",
+      "name": "--dry-run --all 生成 4 个配置",
+      "status": "pass",
+      "detail": "rc=0, 生成 4 个配置",
+      "duration_ms": 2409.5
+    },
+    {
+      "id": "F12",
+      "category": "F",
+      "name": "配置内容（agent/permission/bash/占位符）",
+      "status": "pass",
+      "detail": "agent/permission/bash/占位符全部正确",
+      "duration_ms": 2971.5
+    },
+    {
+      "id": "F13",
+      "category": "F",
+      "name": "--case 过滤单个 case",
+      "status": "pass",
+      "detail": "rc=0, 仅生成 ['todo-cli-01']",
+      "duration_ms": 2611.9
+    },
+    {
+      "id": "F14",
+      "category": "F",
+      "name": "--case 不存在 id 报错",
+      "status": "pass",
+      "detail": "非零退出 + 提示可用 case",
+      "duration_ms": 120.3
+    },
+    {
+      "id": "F15",
+      "category": "F",
+      "name": "--case-file 自定义 case 加载与覆盖",
+      "status": "pass",
+      "detail": "5 个配置，todo-cli 已覆盖，brand-new-case 已加入",
+      "duration_ms": 2795.7
+    },
+    {
+      "id": "F16",
+      "category": "F",
+      "name": "bugfix-utils dry-run 配置生成",
+      "status": "pass",
+      "detail": "配置生成成功，prompt 已渲染 fixture 说明",
+      "duration_ms": 2780.1
+    },
+    {
+      "id": "F17",
+      "category": "F",
+      "name": "setup 路径越界防护",
+      "status": "pass",
+      "detail": "越界路径被拒绝",
+      "duration_ms": 2403.6
+    },
+    {
+      "id": "F18",
+      "category": "F",
+      "name": "缺失 case 文件报错",
+      "status": "pass",
+      "detail": "缺失 case 文件报错",
+      "duration_ms": 116.9
+    },
+    {
+      "id": "P19",
+      "category": "P",
+      "name": "parse_results 新结构（dict）",
+      "status": "pass",
+      "detail": "pass=False asserts=2 sessions=['ses-abc']",
+      "duration_ms": 7.6
+    },
+    {
+      "id": "P20",
+      "category": "P",
+      "name": "parse_results 旧结构（list）",
+      "status": "pass",
+      "detail": "pass=True",
+      "duration_ms": 7.0
+    },
+    {
+      "id": "P21",
+      "category": "P",
+      "name": "parse_results 空结果",
+      "status": "pass",
+      "detail": "error=empty results",
+      "duration_ms": 8.2
+    },
+    {
+      "id": "P22",
+      "category": "P",
+      "name": "parse_results error 字段",
+      "status": "pass",
+      "detail": "pass=False error=boom",
+      "duration_ms": 7.4
+    },
+    {
+      "id": "P23",
+      "category": "P",
+      "name": "resolve_command Windows .CMD 包装",
+      "status": "pass",
+      "detail": "cmd=['C:\\\\WINDOWS\\\\system32\\\\cmd.exe', '/c', 'C:/fake/promptfoo.CMD']",
+      "duration_ms": 0.2
+    },
+    {
+      "id": "P24",
+      "category": "P",
+      "name": "render_placeholders 占位符渲染",
+      "status": "pass",
+      "detail": "out=dir=rel/path abs=\"C:\\\\abs\\\\path\"",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "I25",
+      "category": "I",
+      "name": "promptfoo CLI 版本",
+      "status": "pass",
+      "detail": "promptfoo 0.121.20",
+      "duration_ms": 2400.1
+    },
+    {
+      "id": "I26",
+      "category": "I",
+      "name": "opencode CLI 版本",
+      "status": "pass",
+      "detail": "opencode 1.18.10",
+      "duration_ms": 592.5
+    },
+    {
+      "id": "I27",
+      "category": "I",
+      "name": "@opencode-ai/sdk 已安装",
+      "status": "pass",
+      "detail": "C:\\project\\mobile_intern\\workspaces\\test01\\node_modules\\@opencode-ai\\sdk",
+      "duration_ms": 0.1
+    },
+    {
+      "id": "I28",
+      "category": "I",
+      "name": "javascript 断言写法（echo 集成）",
+      "status": "pass",
+      "detail": "存在断言 PASS、缺失断言 FAIL（共 2 条，rc=100）",
+      "duration_ms": 3592.7
+    },
+    {
+      "id": "I29",
+      "category": "I",
+      "name": "模型 API key 环境",
+      "status": "pass",
+      "detail": "已配置: ['DEEPSEEK_API_KEY']（进程 env 或注册表用户级）",
+      "duration_ms": 0.6
+    },
+    {
+      "id": "E30",
+      "category": "E",
+      "name": "端到端：opencode:sdk 真实运行",
+      "status": "pass",
+      "detail": "真实运行 PASS score=1 output_len=5096 sessions=['ses_037b8b519ffeGNoIeqIX7BRdT8']",
+      "duration_ms": 3.4
+    }
+  ]
+}

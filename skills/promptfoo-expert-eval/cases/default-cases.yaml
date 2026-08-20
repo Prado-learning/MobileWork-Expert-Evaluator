@@ -1,0 +1,210 @@
+# Promptfoo Expert Eval —— 默认 case 库
+#
+# 被测对象：OpenCode 软件开发专家团团长 software-team-lead
+# 工作区：workspaces/test01（.opencode/opencode.jsonc 定义团长与 4 个团员）
+#
+# 字段说明见 references/case-schema.md。
+# 占位符（由 run_eval.py 在生成配置时替换）：
+#   {output_dir}      产物目录，相对 working_dir 的路径
+#   {output_dir_abs}  产物目录绝对路径（JSON 字符串，供 javascript/python 断言使用）
+
+- id: todo-cli
+  title: "Todo CLI 应用开发（结构化）"
+  type: structured
+  description: >
+    确定性验收：要求专家团产出完整文件清单并运行测试。主指标 = 产物完整性 + 测试证据。
+    异常判定：未产出 app.js / package.json，或最终输出不含测试结果，判为失败。
+    任务规模控制在 5 分钟运行窗口内（opencode SDK 默认 provider 超时 300s）。
+  prompt: |
+    请开发一个最小的 Node.js CLI Todo 应用并完成验证。使用快速流程完成，不要走完整 SOP
+    （不需要 PRD 和架构设计文档），重点是把功能实现并验证通过。
+
+    要求：
+    1. 按需委派工程师与 QA 工程师（可快速模式），由团长验收后汇总。
+    2. 功能：支持 add / list / complete 三个子命令，数据持久化到 todo.json。
+    3. 产物全部放入目录：{output_dir}（相对当前工作目录）。
+       至少包含：app.js（入口）、package.json（含 "main": "app.js"）、测试文件（如 app.test.js，使用 node:test）。
+       不要创建 {output_dir} 之外的业务文件。
+    4. 编写至少一个测试并实际运行（node --test 或等效方式），记录测试结果。
+    5. 不要询问用户任何问题，直接完成。
+
+    最终回复必须包含：产物文件清单、测试结果（PASS/FAIL）、TL;DR 总结。
+  output_dir: "eval-runs/{run_id}/todo-cli"
+  bash_allow:
+    - "node *"
+    - "git status*"
+    - "git diff*"
+    - "git log*"
+  assertions:
+    - type: contains
+      value: "app.js"
+    - type: regex
+      value: "([Tt]est|测试)"
+    - type: regex
+      value: "([Pp]ass|通过|[Oo][Kk])"
+    - type: javascript
+      value: |
+        const fsp = import('node:fs');
+        return fsp.then(m => m.default.existsSync({output_dir_abs} + '/app.js'));
+    - type: javascript
+      value: |
+        const fsp = import('node:fs');
+        return fsp.then(m => m.default.existsSync({output_dir_abs} + '/package.json'));
+  main_metric: "断言通过数 / 断言总数（5 项）"
+  anomaly_rules: "未形成有效终态（无输出/超时/崩溃）记异常，不混入正式统计"
+
+- id: prd-priority
+  title: "二手书交易小程序 PRD（混合式）"
+  type: hybrid
+  description: >
+    硬约束（P0/P1/P2 需求池结构）+ 专业判断（优先级合理性、语言一致性）混合验收。
+    主指标 = 硬约束断言通过 + 文件产物存在。异常判定：PRD 无 P0/P1/P2 结构判失败。
+  prompt: |
+    请以软件开发团队团长身份，为一个"二手书交易小程序"组织产出简单 PRD 并完成验收汇报。
+
+    要求：
+    1. 委派产品经理（software-product-manager）编写简单 PRD，并将完整 PRD 文档写入目录：{output_dir}（如 docs/prd.md）。
+    2. PRD 必须包含：产品目标、用户故事、需求池（明确标注 P0 / P1 / P2 三级优先级，每级至少 2 条）、待确认问题。
+    3. 团长按 PRD 验收标准验收后，给出交付总结（TL;DR + 文件清单 + 剩余风险）。
+    4. 不要询问用户任何问题，直接完成。
+
+    最终回复必须包含：PRD 文件路径、P0/P1/P2 各包含的需求条数、交付总结。
+  output_dir: "eval-runs/{run_id}/prd-priority"
+  assertions:
+    - type: contains
+      value: "P0"
+    - type: contains
+      value: "P1"
+    - type: contains
+      value: "P2"
+    - type: regex
+      value: "(待确认|[Oo]pen [Qq]uestion|[Qq]uestion|[Rr]isk)"
+    - type: javascript
+      value: |
+        const fsp = import('node:fs');
+        return fsp.then(m => m.default.existsSync({output_dir_abs} + '/docs/prd.md'));
+  main_metric: "硬约束断言通过率（4 项）+ PRD 文档产物"
+  anomaly_rules: "输出与需求语言不一致或缺失需求池结构记异常并说明"
+
+- id: feature-design
+  title: "在线协作白板 MVP 后端设计（开放式）"
+  type: open-ended
+  description: >
+    开放式高自主任务：不强制确定性断言，验收依据 = 设计文档产物 + 关键接口要素 + 团长交付总结。
+    主指标 = 产物存在性 + 接口定义覆盖。异常判定：无设计文档或未说明方案判失败。
+  prompt: |
+    请以软件开发团队团长身份，组织团队为一个"实时在线协作白板 MVP"完成后端 API 设计方案（不要求完整代码实现）。
+
+    要求：
+    1. 委派产品经理提炼需求要点，委派架构师输出系统设计（实现方案、技术选型、REST API 接口定义、数据结构、任务分解不超过 5 个任务）。
+    2. 设计文档写入目录：{output_dir}（如 docs/system_design.md、docs/class-diagram.mermaid）。
+    3. 团长对设计进行验收（对照 API 覆盖与任务可执行性），并输出交付总结（TL;DR、方案要点、文件清单、下一步建议）。
+    4. 不要询问用户任何问题，直接完成。
+
+    最终回复必须包含：设计文档路径、API 接口清单、任务分解数量、交付总结。
+  output_dir: "eval-runs/{run_id}/feature-design"
+  assertions:
+    - type: regex
+      value: "([Aa][Pp][Ii]|接口|[Ee]ndpoint|/api/)"
+    - type: regex
+      value: "(方案|[Dd]esign|[Aa]rchitecture|设计)"
+    - type: javascript
+      value: |
+        const fsp = import('node:fs');
+        return fsp.then(m => {
+          const fs = m.default;
+          const dir = {output_dir_abs};
+          if (!fs.existsSync(dir)) return false;
+          const walk = (d) => {
+            let out = [];
+            for (const f of fs.readdirSync(d)) {
+              const p = d + '/' + f;
+              if (fs.statSync(p).isDirectory()) out = out.concat(walk(p));
+              else out.push(f);
+            }
+            return out;
+          };
+          return walk(dir).some(f => f.endsWith('.md'));
+        });
+  main_metric: "设计文档产物 + 接口要素覆盖（开放任务不使用确定性通过率）"
+  anomaly_rules: "无方案或设计文档缺失记异常；高自主路径差异不判失败"
+
+- id: bugfix-utils
+  title: "工具库 Bug 修复与回归验证（混合式）"
+  type: hybrid
+  description: >
+    预置含 bug 的代码与测试 fixture，验收修复正确性（确定性断言）+ QA 回归证据。
+    主指标 = 修复断言通过 + 测试运行证据。异常判定：未修复或测试未运行判失败。
+  prompt: |
+    请以软件开发团队团长身份，修复预置在目录 {output_dir}/utils 中的工具库 Bug，并完成回归验证。
+
+    情况说明：
+    - utils/utils.js 中的 add(a, b) 返回值错误（应为两数之和），unique(arr) 实现有误（应返回去重后的数组）。
+    - utils/utils.test.js 是 node:test 编写的测试，目前应处于失败状态。
+    要求：
+    1. 委派工程师修复 utils.js，委派 QA 工程师运行测试（node --test 或等效方式）。
+    2. 修复与测试全部在 {output_dir} 目录内完成，不创建该目录之外的文件。
+    3. 最终回复必须包含：修复说明（改了什么、为什么）、测试运行结果（PASS/FAIL 统计）、交付总结。
+
+    不要询问用户任何问题，直接完成。
+  output_dir: "eval-runs/{run_id}/bugfix-utils"
+  bash_allow:
+    - "node *"
+    - "git status*"
+    - "git diff*"
+    - "git log*"
+  setup:
+    files:
+      - path: "utils/utils.js"
+        content: |
+          // 工具库（含故意引入的 Bug，供评测使用）
+          'use strict';
+
+          // BUG: 应为 a + b，当前实现为 a - b
+          function add(a, b) {
+            return a - b;
+          }
+
+          // BUG: 未做去重，当前直接返回原数组
+          function unique(arr) {
+            return arr;
+          }
+
+          module.exports = { add, unique };
+      - path: "utils/utils.test.js"
+        content: |
+          'use strict';
+          const test = require('node:test');
+          const assert = require('node:assert/strict');
+          const { add, unique } = require('./utils.js');
+
+          test('add(2, 3) === 5', () => {
+            assert.equal(add(2, 3), 5);
+          });
+
+          test('add(-1, 1) === 0', () => {
+            assert.equal(add(-1, 1), 0);
+          });
+
+          test('unique([1, 2, 2, 3]) => [1, 2, 3]', () => {
+            assert.deepEqual(unique([1, 2, 2, 3]), [1, 2, 3]);
+          });
+  assertions:
+    - type: javascript
+      value: |
+        const fsp = import('node:fs');
+        return fsp.then(m => {
+          const fs = m.default;
+          const src = fs.readFileSync({output_dir_abs} + '/utils/utils.js', 'utf8');
+          return src.includes('a + b') && src.includes('Set');
+        });
+    - type: javascript
+      value: |
+        const fsp = import('node:fs');
+        return fsp.then(m => m.default.existsSync({output_dir_abs} + '/utils/utils.js'));
+    - type: regex
+      value: "([Pp]ass|通过)"
+    - type: contains
+      value: "unique"
+  main_metric: "修复断言（2 项）+ 测试证据"
+  anomaly_rules: "fixture 缺失或测试未运行记异常"

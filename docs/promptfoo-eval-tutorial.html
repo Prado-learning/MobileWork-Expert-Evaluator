@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="icon" type="image/png" href="figures/brand/mobilework-product-icon.png">
+<link rel="apple-touch-icon" href="figures/brand/mobilework-product-icon.png">
+<title>Promptfoo 评测 OpenCode 专家团 — 从入门到真实运行</title>
+<style>
+  :root {
+    --ease: cubic-bezier(.16,1,.3,1); --t-fast: 180ms var(--ease); --t-norm: 320ms var(--ease);
+    --shadow-sm: 0 1px 2px rgb(18 19 20 / .05);
+    --shadow-md: 0 12px 24px -8px rgb(18 19 20 / .12);
+    --page: #f0f2f5; --surface: #fff; --ink: #121314; --ink-soft: #2e2f30;
+    --muted: #656666; --muted-light: #7c8085;
+    --hairline: #e5e6eb; --hairline-strong: #dbdcdc;
+    --accent: #1890ff; --accent-strong: #096ed9; --accent-bg: #e6f7ff;
+    --success: #00a870; --success-bg: #e8f7f1; --warning: #d85d20; --warning-bg: #fdf0e8;
+    --code-bg: #17191b; --code-ink: #e6e8ea;
+    --radius: 8px; --content: 1184px;
+    --font-sans: "IBM Plex Sans Variable", "IBM Plex Sans", Geist, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  @media (min-width: 901px) { html { zoom: 1.5; } }
+  html, body { overflow-x: clip; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
+  body { background: var(--page); color: var(--ink); font-family: var(--font-sans); font-size: 15px; line-height: 1.7; -webkit-font-smoothing: antialiased; }
+
+  /* ---------- Top bar ---------- */
+  .topbar { position: sticky; top: 0; z-index: 50; background: color-mix(in oklch, var(--surface) 86%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--hairline); }
+  .topbar-inner { max-width: var(--content); margin: 0 auto; padding: 12px 32px; display: flex; align-items: center; justify-content: space-between; }
+  .topbar-brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+  .topbar-brand .cmcc-logo { height: 20px; }
+  .topbar-brand .brand-icon { height: 18px; }
+  .topbar-brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .topbar nav { display: flex; gap: 2px; font-size: 13px; color: var(--muted); }
+  .topbar nav a { color: var(--muted); text-decoration: none; padding: 6px 12px; border-radius: 6px; transition: color var(--t-fast), background var(--t-fast); }
+  .topbar nav a:hover { color: var(--ink); background: var(--page); }
+
+  /* ---------- Hero ---------- */
+  .hero { max-width: var(--content); margin: 0 auto; min-height: 560px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; align-items: end; gap: 88px; padding: 104px 32px 96px; }
+  .hero .hero-flag { width: 28px; height: 3px; background: var(--accent); border-radius: 2px; margin-bottom: 22px; }
+  .eyebrow { color: var(--accent-strong); font-family: var(--font-mono); letter-spacing: .1em; text-transform: uppercase; margin: 0 0 16px; font-size: 11.5px; font-weight: 600; }
+  .hero h1 { font-size: clamp(38px, 5vw, 62px); font-weight: 600; line-height: 1.08; letter-spacing: -.03em; }
+  .hero h1 .accent-word { color: var(--accent-strong); }
+  .hero .hero-lead { margin-top: 26px; color: var(--muted); font-size: 16.5px; max-width: 560px; line-height: 1.75; }
+  .hero .hero-meta { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted-light); font-size: 12px; font-family: var(--font-mono); }
+  .facts-title { color: var(--muted-light); font-family: var(--font-mono); letter-spacing: .08em; text-transform: uppercase; margin: 0 0 12px; font-size: 11px; font-weight: 600; }
+  .brief-facts { border: 1px solid var(--hairline-strong); border-radius: var(--radius); background: var(--surface); align-self: stretch; padding: 26px 28px; box-shadow: var(--shadow-sm); }
+  .fact-row { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hairline); }
+  .fact-row:last-child { border-bottom: none; }
+  .fact-row .k { color: var(--muted); font-size: 13px; }
+  .fact-row .v { font-family: var(--font-mono); font-size: 13px; font-weight: 500; text-align: right; }
+  .fact-row .v.ok { color: var(--success); }
+
+  /* ---------- Sections ---------- */
+  .content-section { max-width: var(--content); margin: 0 auto; padding: 112px 32px; border-top: 1px solid var(--hairline); }
+  .content-section > h2 { font-size: clamp(28px, 3.6vw, 42px); font-weight: 600; letter-spacing: -.025em; line-height: 1.12; margin: 0 0 16px; }
+  .content-section > .lead { color: var(--muted); max-width: 640px; margin: 0 0 48px; font-size: 16px; line-height: 1.75; }
+
+  /* Two-column editorial */
+  .editorial-grid { border-top: 1px solid var(--hairline-strong); grid-template-columns: .72fr 1.28fr; align-items: start; gap: 64px; padding: 48px 0 76px; display: grid; }
+  .editorial-grid > * { min-width: 0; }
+  .editorial-grid .aside { position: sticky; top: 88px; }
+  .editorial-grid .aside .aside-label { font-family: var(--font-mono); font-size: 12px; color: var(--accent-strong); letter-spacing: .08em; text-transform: uppercase; font-weight: 600; margin-bottom: 10px; }
+  .editorial-grid .aside h3 { font-size: 23px; font-weight: 600; letter-spacing: -.015em; line-height: 1.3; }
+  .editorial-grid .aside p { color: var(--muted); margin-top: 14px; font-size: 14px; line-height: 1.75; }
+
+  /* Numbered list (goal-list style) */
+  .goal-list { border-top: 1px solid var(--hairline-strong); margin: 0; padding: 0; list-style: none; }
+  .goal-list li { display: grid; grid-template-columns: 60px 1fr; gap: 22px; padding: 22px 0; border-bottom: 1px solid var(--hairline); align-items: start; }
+  .goal-no { border: 1px solid var(--hairline-strong); width: 60px; height: 60px; color: var(--accent-strong); font-family: var(--font-mono); border-radius: 50%; place-items: center; font-size: 17px; font-weight: 600; display: grid; flex: none; background: var(--surface); transition: all var(--t-fast); }
+  .goal-list li:hover .goal-no { border-color: var(--accent); background: var(--accent-bg); transform: translateY(-1px); }
+  .goal-list li > div:last-child { min-width: 0; }
+  .goal-list h4 { font-size: 15px; font-weight: 600; margin-bottom: 5px; letter-spacing: -.01em; }
+  .goal-list p { color: var(--muted); font-size: 13.5px; line-height: 1.7; }
+
+  /* Grid with 1px lines (method-grid style) */
+  .method-grid { border: 1px solid var(--hairline-strong); border-radius: var(--radius); background: var(--hairline-strong); grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 40px; display: grid; overflow: hidden; }
+  .method-grid > div { background: var(--surface); padding: 26px; transition: background var(--t-fast); min-width: 0; }
+  .method-grid > div:hover { background: color-mix(in oklch, var(--accent-bg) 55%, var(--surface)); }
+  .method-grid h4 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .method-grid code { font-family: var(--font-mono); font-size: 12.5px; background: var(--accent-bg); color: var(--accent-strong); padding: 1px 6px; border-radius: 4px; }
+  .method-grid p { color: var(--muted); font-size: 13px; line-height: 1.7; }
+
+  /* 5-col grid (autonomy style) */
+  .col-grid { border-top: 1px solid var(--hairline-strong); border-left: 1px solid var(--hairline-strong); grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 32px; display: grid; }
+  .col-grid .col { border-right: 1px solid var(--hairline-strong); border-bottom: 1px solid var(--hairline-strong); padding: 22px; background: var(--surface); transition: background var(--t-fast); min-width: 0; }
+  .col-grid .col:hover { background: color-mix(in oklch, var(--accent-bg) 45%, var(--surface)); }
+  .col-grid .col .tag { font-family: var(--font-mono); font-size: 11px; color: var(--accent-strong); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+  .col-grid .col h5 { font-size: 13px; font-weight: 600; margin: 6px 0 8px; }
+  .col-grid .col p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+  /* Steps */
+  .step { display: grid; grid-template-columns: 46px 1fr; gap: 20px; padding: 24px 0; border-bottom: 1px solid var(--hairline); }
+  .step:last-child { border-bottom: none; }
+  .step-no { width: 46px; height: 46px; border-radius: 50%; border: 1px solid var(--hairline-strong); background: var(--surface); color: var(--accent-strong); font-family: var(--font-mono); font-weight: 600; font-size: 15px; display: grid; place-items: center; transition: all var(--t-fast); }
+  .step:hover .step-no { border-color: var(--accent); background: var(--accent-bg); }
+  .step-body { min-width: 0; }
+  .step-body h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .step-body p { color: var(--muted); font-size: 13.5px; margin-bottom: 10px; line-height: 1.7; }
+
+  /* Code */
+  .code-wrap { margin: 12px 0; min-width: 0; max-width: 100%; }
+  .code-head { background: #1f2226; color: #9aa4ae; font-family: var(--font-mono); font-size: 11px; letter-spacing: .04em; padding: 8px 16px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; }
+  .code-head .ch-dot { display: inline-flex; gap: 5px; }
+  .code-head .ch-dot i { width: 7px; height: 7px; border-radius: 50%; background: #3a3f45; }
+  pre { background: var(--code-bg); color: var(--code-ink); border-radius: 0 0 var(--radius) var(--radius); padding: 18px 20px; overflow-x: auto; max-width: 100%; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.75; margin: 0; }
+  pre .c { color: #8b949e; }
+  pre .k { color: #79c0ff; }
+  pre .s { color: #a5d6ff; }
+  pre .n { color: #ffa657; }
+  pre .g { color: #7ee787; }
+
+  /* Tables */
+  table { width: 100%; max-width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--hairline-strong); border-radius: var(--radius); overflow: hidden; font-size: 13px; margin: 20px 0; }
+  th { text-align: left; background: var(--page); font-weight: 500; padding: 11px 14px; border-bottom: 1px solid var(--hairline-strong); color: var(--muted); font-size: 11.5px; letter-spacing: .03em; text-transform: uppercase; }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--hairline); vertical-align: top; transition: background var(--t-fast); }
+  tbody tr:hover td { background: color-mix(in oklch, var(--accent-bg) 40%, var(--surface)); }
+  tr:last-child td { border-bottom: none; }
+  td code, .mono { font-family: var(--font-mono); font-size: 12px; background: var(--page); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  code { overflow-wrap: anywhere; }
+  code.plain { background: none; padding: 0; }
+
+  /* Badges */
+  .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 2px 10px; border-radius: 999px; letter-spacing: .02em; }
+  .badge .bi { font-weight: 700; }
+  .b-pass { color: var(--success); background: var(--success-bg); border: 1px solid color-mix(in oklch, var(--success) 30%, var(--hairline)); }
+  .b-warn { color: var(--warning); background: var(--warning-bg); border: 1px solid color-mix(in oklch, var(--warning) 30%, var(--hairline)); }
+  .b-accent { color: var(--accent-strong); background: var(--accent-bg); border: 1px solid color-mix(in oklch, var(--accent) 30%, var(--hairline)); }
+
+  /* Callout */
+  .callout { border: 1px solid var(--hairline-strong); border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 var(--radius) var(--radius) 0; padding: 16px 20px; margin: 20px 0; font-size: 14px; }
+  .callout.warn { border-left-color: var(--warning); }
+  .callout code { font-family: var(--font-mono); font-size: 12.5px; background: var(--accent-bg); color: var(--accent-strong); padding: 1px 6px; border-radius: 4px; }
+  .callout.warn code { background: var(--warning-bg); color: var(--warning); }
+
+  /* Result hero */
+  .result-hero { border: 1px solid var(--hairline-strong); border-left: 4px solid var(--success); border-radius: var(--radius); background: var(--surface); padding: 30px 32px; margin: 30px 0; display: flex; align-items: center; gap: 30px; flex-wrap: wrap; box-shadow: var(--shadow-sm); }
+  .result-score { font-size: 60px; font-weight: 600; color: var(--success); line-height: 1; letter-spacing: -.03em; }
+  .result-meta { color: var(--muted); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+  .result-meta code { font-family: var(--font-mono); font-size: 12px; color: var(--ink); background: var(--page); padding: 1px 6px; border-radius: 4px; }
+  .result-meta div { margin-bottom: 4px; }
+
+  /* Figures */
+  .fig-center { max-width: 720px; margin: 30px auto; }
+  figure { margin: 28px 0; }
+  .fig-frame { background: var(--surface); border: 1px solid var(--hairline-strong); border-radius: var(--radius); padding: 24px; overflow-x: auto; max-width: 100%; }
+  .fig-frame svg { display: block; margin: 0 auto; min-width: 640px; }
+  figure img { max-width: 100%; border: 1px solid var(--hairline-strong); border-radius: var(--radius); background: var(--surface); display: block; }
+  figcaption { color: var(--muted-light); font-size: 12px; margin-top: 10px; text-align: center; }
+
+  /* Cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--hairline-strong); border: 1px solid var(--hairline-strong); border-radius: var(--radius); overflow: hidden; margin: 20px 0; }
+  .cards .card { background: var(--surface); padding: 22px; transition: background var(--t-fast), transform var(--t-norm), box-shadow var(--t-norm); min-width: 0; }
+  .cards .card:hover { background: var(--surface); transform: translateY(-2px); box-shadow: var(--shadow-md); z-index: 1; position: relative; }
+  .cards h4 { font-size: 14px; font-weight: 600; margin-bottom: 7px; letter-spacing: -.01em; }
+  .cards p { color: var(--muted); font-size: 13px; line-height: 1.7; }
+  .cards code { font-family: var(--font-mono); font-size: 12px; }
+
+  footer { border-top: 1px solid var(--hairline); }
+  .footer-inner { max-width: var(--content); margin: 0 auto; padding: 40px 32px 56px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; color: var(--muted-light); font-size: 12px; }
+  .footer-inner .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); }
+  .footer-inner .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+  @media (max-width: 900px) {
+    .editorial-grid .aside { position: static; }
+    .hero { grid-template-columns: 1fr; gap: 40px; padding: 64px 24px; min-height: auto; }
+    .editorial-grid { grid-template-columns: 1fr; gap: 24px; }
+    .method-grid, .col-grid { grid-template-columns: 1fr; }
+    .topbar nav { display: none; }
+    .content-section { padding: 72px 24px; }
+  }
+  @media (max-width: 560px) { .hero h1 { font-size: 34px; } .goal-list li { grid-template-columns: 1fr; } .goal-no { width: 48px; height: 48px; } }
+
+  /* Brand logos */
+  .brand-icon { height: 22px; width: auto; display: block; }
+  .cmcc-logo { height: 22px; width: auto; display: block; opacity: .95; }
+  .topbar-right { display: flex; align-items: center; gap: 8px; }
+  .topbar-right nav { display: flex; gap: 2px; font-size: 13px; color: var(--muted); }
+  footer .cmcc-logo { height: 24px; }
+  .footer-brand { display: flex; align-items: center; gap: 12px; }
+  .footer-brand .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); }
+  .footer-brand .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+  .footer-right { display: flex; align-items: center; gap: 10px; color: var(--muted-light); font-size: 12px; }
+
+
+  /* Interactive detail —— 绑定到原有元素，画面零变化 */
+  [data-dialog] { cursor: pointer; }
+  tr[data-dialog]:hover td { background: color-mix(in oklch, var(--accent-bg) 55%, var(--surface)); }
+  .col[data-dialog]:hover { background: color-mix(in oklch, var(--accent-bg) 60%, var(--surface)); }
+  .code-wrap[data-dialog]:hover pre { box-shadow: 0 0 0 1.5px var(--accent); }
+  .code-wrap[data-dialog] { transition: box-shadow var(--t-fast); }
+  dialog.detail-dialog[open] { display: flex; flex-direction: column; position: fixed; inset: 0; margin: auto; border: 1px solid var(--hairline-strong); border-radius: 10px; padding: 0; max-width: 760px; width: 92vw; max-height: 82vh; box-shadow: var(--shadow-md); background: var(--surface); color: var(--ink); }
+  dialog.detail-dialog::backdrop { background: rgb(18 19 20 / .5); }
+  .dlg-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 22px; border-bottom: 1px solid var(--hairline); background: var(--surface); }
+  .dlg-head h3 { font-size: 15px; font-weight: 600; margin: 0; }
+  .dlg-close { appearance: none; border: none; background: var(--page); color: var(--muted); width: 28px; height: 28px; border-radius: 50%; cursor: pointer; font-size: 13px; transition: all var(--t-fast); }
+  .dlg-close:hover { background: var(--accent-bg); color: var(--accent-strong); }
+  .dlg-body { flex: 1; min-height: 0; padding: 20px 22px 26px; overflow-y: auto; -webkit-overflow-scrolling: touch; contain: layout paint; }
+  .dlg-body h4 { font-size: 13px; font-weight: 600; margin: 18px 0 8px; color: var(--accent-strong); text-transform: uppercase; letter-spacing: .05em; }
+  .dlg-body h4:first-child { margin-top: 0; }
+  .dlg-note { color: var(--muted); font-size: 12.5px; margin: 8px 0; line-height: 1.7; }
+  .dlg-code { margin: 6px 0 12px !important; }
+
+
+  /* ---------- Responsive (mobile-first refinements) ---------- */
+  .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: var(--radius); }
+  .tbl-wrap table { margin: 20px 0; min-width: 480px; }
+  dialog .tbl-wrap table { margin: 10px 0; }
+
+  @media (max-width: 900px) {
+    .topbar { backdrop-filter: none; background: var(--surface); }
+    .topbar-right nav, .topbar nav { display: none !important; }
+    .topbar-brand { gap: 6px; }
+    .topbar-brand .cmcc-logo { height: 16px; }
+    .topbar-brand .brand-icon { height: 16px; }
+    .topbar-brand span { font-size: 12px; white-space: nowrap; }
+    .content-section { padding: 64px 18px; }
+    .hero { padding: 56px 18px 64px; }
+    .topbar-inner { padding: 10px 18px; }
+    .fig-frame { padding: 14px; }
+    .brief-facts { padding: 20px; }
+    .dlg-head { padding: 12px 16px; }
+    .dlg-body { padding: 16px 18px; }
+    dialog.detail-dialog { max-width: 96vw; width: 96vw; }
+    .result-hero { padding: 22px 20px; }
+  }
+
+  @media (max-width: 560px) {
+    .hero h1 { font-size: 30px; }
+    .hero .hero-lead { font-size: 15px; }
+    .content-section > h2 { font-size: 24px; }
+    .result-score { font-size: 44px; }
+    .step { grid-template-columns: 38px 1fr; gap: 14px; padding: 18px 0; }
+    .step-no { width: 38px; height: 38px; font-size: 13px; }
+    .goal-no { width: 48px; height: 48px; font-size: 15px; }
+    .dlg-close { width: 36px; height: 36px; }
+    .badge { font-size: 10.5px; padding: 2px 8px; }
+    .callout { padding: 14px 16px; font-size: 13px; }
+    .cards .card { padding: 16px; }
+    .topbar-brand span { font-size: 12.5px; }
+  }
+
+
+  .cards-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 900px) { .cards-3 { grid-template-columns: 1fr; } }
+
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="topbar-brand">
+      <img class="cmcc-logo" src="figures/brand/china-mobile-logo.png" alt="中国移动">
+      <img class="brand-icon" src="figures/brand/mobilework-product-icon.png" alt="MobileWork">
+      <span>Promptfoo Expert Eval</span>
+    </div>
+    <div class="topbar-right">
+      <nav>
+        <a href="#progress">01 背景与进展</a>
+        <a href="#principle">02 评测原理</a>
+        <a href="#tutorial">03 教程</a>
+        <a href="#demo">04 真实演示</a>
+        <a href="#debug">05 排障</a>
+        <a href="#checklist">06 对照</a>
+      </nav>
+    </div>
+  </div>
+</div>
+
+<!-- ============ HERO ============ -->
+<div class="hero">
+  <div>
+    <div class="hero-flag"></div>
+    <p class="eyebrow">MobileWork · Expert Eval · Promptfoo</p>
+    <h1><span class="accent-word">Promptfoo</span>初步评测——阶段性汇报1</h1>
+    <p class="hero-lead">面向「2026 SWARM · MobileWork 专家（团）观测、评估、基准测试与优化系统」课题：以 Promptfoo 为评测框架、<span class="mono" style="font-family:var(--font-mono);font-size:14px">opencode:sdk</span> 为执行器，驱动真实软件开发专家团 software-team-lead 运行，产出可追溯证据。</p>
+    <div class="hero-meta">
+      <span>promptfoo 0.121.20</span><span>·</span>
+      <span>opencode 1.18.10</span><span>·</span>
+      <span>@opencode-ai/sdk 1.18.11</span><span>·</span>
+      <span>snapshot 2026-07-24</span>
+    </div>
+  </div>
+  <aside class="brief-facts">
+    <p class="facts-title">课题参数</p>
+    <div class="fact-row"><span class="k">评测框架</span><span class="v">Promptfoo</span></div>
+    <div class="fact-row"><span class="k">执行器</span><span class="v">opencode:sdk</span></div>
+    <div class="fact-row"><span class="k">被测对象</span><span class="v">software-team-lead</span></div>
+    <div class="fact-row"><span class="k">团队规模</span><span class="v">团长 + 4 团员</span></div>
+    <div class="fact-row"><span class="k">真实运行</span><span class="v ok">PASS · score 1.0</span></div>
+    <div class="fact-row"><span class="k">插件自测</span><span class="v ok">29 / 29</span></div>
+  </aside>
+</div>
+
+<!-- ============ 01 背景与进展 ============ -->
+<section class="content-section" id="progress">
+  <p class="eyebrow">01 · Background</p>
+  <h2>背景：课题任务要什么，<br>个人做到了哪一步</h2>
+  <p class="lead">课题任务要求构建可验证、可重复、可追溯的专家（团）评测链路。个人本周完成最小完整链路与真实运行验证。</p>
+
+  <div class="callout">
+    <strong>课题任务一句话</strong>：每组构建独立 Claude Code Marketplace 评测插件，从 OpenWork 对话发起，驱动真实 OpenCode 单专家与专家团、经 Promptfoo 完成评测并关联统一证据，完成原包只读下的优化副本与同批 case 复测闭环，累计不少于 80 次有效正式运行。
+  </div>
+
+  <figure class="fig-frame">
+    <svg viewBox="0 0 1000 100" role="img" aria-label="课题任务固定运行边界链路"><defs>
+        <marker id="a1" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto"><path d="M0,0 L8,3.5 L0,7 Z" fill="#7c8085"/></marker>
+      </defs>
+      <g font-family="'IBM Plex Sans',sans-serif" font-size="12">
+        <rect x="0" y="26" width="175" height="50" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="87.5" y="45" text-anchor="middle" fill="#121314" font-weight="600">OpenWork 导入</text>
+        <text x="87.5" y="62" text-anchor="middle" fill="#7c8085">公共 manager + 本组插件</text>
+        <line x1="177" y1="51" x2="197" y2="51" stroke="#7c8085" marker-end="url(#a1)"/>
+        <rect x="199" y="26" width="125" height="50" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="261.5" y="45" text-anchor="middle" fill="#121314" font-weight="600">OpenWork 新会话</text>
+        <text x="261.5" y="62" text-anchor="middle" fill="#7c8085">对话式发起</text>
+        <line x1="326" y1="51" x2="346" y2="51" stroke="#7c8085" marker-end="url(#a1)"/>
+        <rect x="348" y="26" width="155" height="50" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="425.5" y="45" text-anchor="middle" fill="#121314" font-weight="600">评测插件</text>
+        <text x="425.5" y="62" text-anchor="middle" fill="#7c8085">选择对象 / case / 版本</text>
+        <line x1="505" y1="51" x2="525" y2="51" stroke="#7c8085" marker-end="url(#a1)"/>
+        <rect x="527" y="26" width="185" height="50" rx="8" fill="#e6f7ff" stroke="#1890ff"/>
+        <text x="619.5" y="45" text-anchor="middle" fill="#121314" font-weight="600">真实 OpenCode 专家（团）</text>
+        <text x="619.5" y="62" text-anchor="middle" fill="#7c8085">主 / 子会话 · 产物 · 权限</text>
+        <line x1="714" y1="51" x2="734" y2="51" stroke="#7c8085" marker-end="url(#a1)"/>
+        <rect x="736" y="26" width="120" height="50" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="796" y="45" text-anchor="middle" fill="#121314" font-weight="600">Promptfoo</text>
+        <text x="796" y="62" text-anchor="middle" fill="#7c8085">执行 / 评判</text>
+        <line x1="858" y1="51" x2="878" y2="51" stroke="#7c8085" marker-end="url(#a1)"/>
+        <rect x="880" y="26" width="120" height="50" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="940" y="45" text-anchor="middle" fill="#121314" font-weight="600">本地结果 Web</text>
+        <text x="940" y="62" text-anchor="middle" fill="#7c8085">证据 / 评分 / 对比</text>
+      </g>
+    </svg>
+    <figcaption>课题任务固定运行边界：OpenWork 对话是最终用户入口，Promptfoo 必须真实入链，证据统一沉淀。</figcaption>
+  </figure>
+
+  <div class="editorial-grid">
+    <div class="aside">
+      <div class="aside-label">本周进度汇报</div>
+      <h3>从转换专家团到接入评测框架</h3>
+      <p>四个关键认知：专家团本质是「提示词定义角色/功能 + 权限配置」；Promptfoo 不自动生成常规评测用例（其 Red Team 模块另有自动生成对抗测试的能力）；case 与断言须由个人编写，Promptfoo 提供稳定可靠的执行与判定框架；opencode:sdk 可作为执行器接入真实 OpenCode 会话。</p>
+    </div>
+    <ul class="goal-list">
+      <li><div class="goal-no">01</div><div><h4>专家团转换</h4><p>通过 mobilework-expert-manager 插件将 WorkBuddy 软件开发专家团转换为 OpenCode 格式（expert.json 为唯一事实源）。</p></div></li>
+      <li><div class="goal-no">02</div><div><h4>理解 OpenCode 配置</h4><p>阅读官方文档与文件夹配置：.opencode/agents/*.md 与 opencode.jsonc 定义各智能体的角色、功能与权限。</p></div></li>
+      <li><div class="goal-no">03</div><div><h4>安装并学习 Promptfoo</h4><p>编写简单用例并测试专家团；理解它只提供执行与判定框架，case 与断言必须自己设计。</p></div></li>
+      <li><div class="goal-no">04</div><div><h4>接入 opencode:sdk</h4><p>以 opencode:sdk 作为 provider 驱动真实 OpenCode 会话，完成专家团评测。</p></div></li>
+    </ul>
+  </div>
+
+  <div class="editorial-grid">
+    <div class="aside">
+      <div class="aside-label">在此基础上</div>
+      <h3>个人交付了什么</h3>
+      <p>评测插件 + 真实运行打通 + 自测闭环 + 工程沉淀，形成可复现的评测资产。</p>
+    </div>
+    <div class="cards">
+      <div class="card"><h4>评测插件</h4><p>按 Claude Code Marketplace 规范构建 <code>promptfoo-expert-eval</code>：<code>.claude-plugin/</code> + <code>skills/</code> + 内置 4 个 case，支持自定义 case。</p></div>
+      <div class="card"><h4>真实运行打通</h4><p>排除 4 个根因后，<code>bugfix-utils</code> case 真实端到端运行 <span class="badge b-pass">PASS score=1.0</span>，产物与会话证据齐全。</p></div>
+      <div class="card"><h4>自测闭环</h4><p>插件自测 29/29 全部通过（静态 / 功能 / 解析 / 集成 / 端到端），报告按 MobileWork Design System 渲染。</p></div>
+      <div class="card"><h4>工程沉淀</h4><p>评测工作区权限适配、opencode 数据目录隔离、SDK 超时适配等经验已写入 README / methodology。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 02 评测原理 ============ -->
+<section class="content-section" id="principle">
+  <p class="eyebrow">02 · Principle</p>
+  <h2>Promptfoo 评测原理</h2>
+  <p class="lead">Promptfoo 是面向 LLM 应用、提示词与智能体的开源评测框架（MIT，TypeScript）。核心是「配置化 case + 断言 + 指标 + 结果对比」。</p>
+
+  <div class="callout">
+    <strong>一个关键认知</strong>：Promptfoo <strong>不会自动生成测试用例</strong>——case、断言、评分方式都要由个人编写。它提供的是稳定可靠的执行与判定框架：<code>promptfoo eval</code> 批量执行，<code>promptfoo view</code> 可视化对比。
+  </div>
+
+  <div class="method-grid">
+    <div><h4><code>prompts</code></h4><p>要评测的提示词模板，支持 <code>{{variable}}</code> 占位符；评测的是「提示词 + 执行器」的组合效果。</p></div>
+    <div><h4><code>providers</code></h4><p>执行器：OpenAI / Anthropic / Google / Ollama / 自定义……以及本课题使用的 <code>opencode:sdk</code>（驱动 OpenCode 智能体）。</p></div>
+    <div><h4><code>tests</code> + <code>assert</code></h4><p>测试输入（<code>vars</code>）与断言。断言可选：可确定性自动判定，也可纯人工查看。</p></div>
+  </div>
+
+  <figure class="fig-frame" style="margin-top:40px">
+    <svg viewBox="0 0 970 155" role="img" aria-label="Promptfoo eval 数据流"><defs>
+        <marker id="a2" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto"><path d="M0,0 L8,3.5 L0,7 Z" fill="#7c8085"/></marker>
+      </defs>
+      <g font-family="'IBM Plex Sans',sans-serif" font-size="12">
+        <rect x="0" y="14" width="240" height="64" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="120" y="36" text-anchor="middle" fill="#121314" font-weight="600">promptfooconfig.yaml</text>
+        <text x="120" y="54" text-anchor="middle" fill="#7c8085">prompts × providers × tests</text>
+        <text x="120" y="68" text-anchor="middle" fill="#7c8085">（含 assert 断言）</text>
+        <line x1="242" y1="46" x2="262" y2="46" stroke="#7c8085" marker-end="url(#a2)"/>
+        <rect x="264" y="14" width="180" height="64" rx="8" fill="#e6f7ff" stroke="#1890ff"/>
+        <text x="354" y="36" text-anchor="middle" fill="#121314" font-weight="600">promptfoo eval</text>
+        <text x="354" y="54" text-anchor="middle" fill="#7c8085">逐组合发起调用</text>
+        <text x="354" y="68" text-anchor="middle" fill="#7c8085">--repeat N · --no-cache</text>
+        <line x1="446" y1="46" x2="466" y2="46" stroke="#7c8085" marker-end="url(#a2)"/>
+        <rect x="468" y="14" width="160" height="64" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="548" y="36" text-anchor="middle" fill="#121314" font-weight="600">provider 执行</text>
+        <text x="548" y="54" text-anchor="middle" fill="#7c8085">opencode:sdk</text>
+        <text x="548" y="68" text-anchor="middle" fill="#7c8085">真实会话 / 输出</text>
+        <line x1="630" y1="46" x2="650" y2="46" stroke="#7c8085" marker-end="url(#a2)"/>
+        <rect x="652" y="14" width="150" height="64" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="727" y="36" text-anchor="middle" fill="#121314" font-weight="600">assert 判定</text>
+        <text x="727" y="54" text-anchor="middle" fill="#7c8085">contains / regex</text>
+        <text x="727" y="68" text-anchor="middle" fill="#7c8085">javascript / rubric</text>
+        <line x1="804" y1="46" x2="824" y2="46" stroke="#7c8085" marker-end="url(#a2)"/>
+        <rect x="826" y="14" width="144" height="64" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="898" y="36" text-anchor="middle" fill="#121314" font-weight="600">结果</text>
+        <text x="898" y="54" text-anchor="middle" fill="#7c8085">CLI 表格 · JSON</text>
+        <text x="898" y="68" text-anchor="middle" fill="#7c8085">view 可视化</text>
+        <text x="485" y="134" text-anchor="middle" fill="#7c8085" font-size="12">派生：pass / fail、score、逐断言明细、耗时、成本、token、原始输出 —— 全部可导出 JSON 进入统一证据</text>
+      </g>
+    </svg>
+    <figcaption>Promptfoo eval 数据流：配置 → 批量执行 → 断言判定 → 结构化结果。</figcaption>
+  </figure>
+
+
+  <figure class="fig-center">
+    <img src="figures/tutorial-self-grading.gif" alt="llm-rubric 模型裁判自评分演示" loading="lazy">
+    <figcaption>图 · llm-rubric 模型裁判自评分（self-grading）——混合式/开放式任务的质量评分方式，需记录裁判模型与偏差。</figcaption>
+  </figure>
+
+  <div class="editorial-grid">
+    <div class="aside">
+      <div class="aside-label">Assertions</div>
+      <h3>常用断言类型</h3>
+      <p>本课题涉及的断言类型与适用场景（内置 case 实际使用 contains / regex / javascript；对应课题任务 3.3 三类任务）。</p>
+    </div>
+    <div class="tbl-wrap"><table>
+      <tr><th>断言</th><th>作用</th><th>适用</th></tr>
+      <tr><td><code>contains</code> / <code>icontains</code></td><td>输出是否包含指定子串</td><td>结构化任务硬约束</td></tr>
+      <tr><td><code>regex</code></td><td>输出是否匹配正则（JS 引擎，不支持 Python 的 <code>(?i)</code>）</td><td>结构化 / 混合式</td></tr>
+      <tr><td><code>javascript</code></td><td>自定义函数判定，可访问文件系统验证产物（<code>import('node:fs')</code>）</td><td>产物类确定性断言</td></tr>
+      <tr><td><code>llm-rubric</code></td><td>模型裁判按 rubric 打分</td><td>混合式 / 开放式（记录裁判偏差）</td></tr>
+      <tr><td><code>cost</code> / <code>latency</code></td><td>成本 / 延迟阈值</td><td>护栏指标（课题任务 4.2）</td></tr>
+    </table></div>
+  </div>
+</section>
+
+<!-- ============ 03 教程 ============ -->
+<section class="content-section" id="tutorial">
+  <p class="eyebrow">03 · Tutorial</p>
+  <h2>教程：五步跑通一个 eval</h2>
+  <p class="lead">以官方 Getting Started 为骨架，落到个人的专家团评测场景。</p>
+
+  <div class="step">
+    <div class="step-no">0</div>
+    <div class="step-body">
+      <h3>安装</h3>
+      <div class="code-wrap"><div class="code-head"><span>终端 · 安装</span><span class="ch-dot"><i></i><i></i><i></i></span></div><pre><span class="c"># Promptfoo（全局）</span>
+npm install -g promptfoo
+<span class="c"># opencode CLI + SDK（opencode:sdk provider 必需）</span>
+curl -fsSL https://opencode.ai/install | bash
+npm install @opencode-ai/sdk
+<span class="c"># 模型凭据：deepseek 不在 promptfoo 的 env 映射表，用 --api-key 注入</span>
+<span class="c"># export DEEPSEEK_API_KEY=sk-...</span></pre></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-no">1</div>
+    <div class="step-body">
+      <h3>写一个最小配置</h3>
+      <div class="code-wrap"><div class="code-head"><span>promptfooconfig.yaml · 最小配置</span><span class="ch-dot"><i></i><i></i><i></i></span></div><pre><span class="c"># promptfooconfig.yaml —— 官方最小示例</span>
+providers:
+  - openai:chat:gpt-5.4
+prompts:
+  - '把下面的英文翻译成中文：{{input}}'
+tests:
+  - vars:
+      input: Hello world
+    assert:
+      - type: contains
+        value: '你好'</pre>
+  <figure>
+    <img src="figures/tutorial-provider-override.png" alt="provider override 配置示例" loading="lazy">
+    <figcaption>图 · Promptfoo provider 配置示例（官方 Getting Started）——CLI 可用 <code>-r/--override</code> 临时替换 provider，配置中也可定义多个 provider 并行对比。</figcaption>
+  </figure></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-no">2</div>
+    <div class="step-body">
+      <h3>添加断言与更多 case</h3>
+      <div class="code-wrap"><div class="code-head"><span>promptfooconfig.yaml · 添加断言</span><span class="ch-dot"><i></i><i></i><i></i></span></div><pre>tests:
+  - vars:
+      input: Hello world
+    assert:
+      - type: contains
+        value: '你好'
+  - vars:
+      input: Where is the library?
+    assert:
+      - type: icontains
+        value: '图书馆'</pre></div>
+      <p>写 case 时思考「核心使用场景 + 可能失败的边界」；Promptfoo 只负责执行与判定，<strong>用例要自己设计</strong>。</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-no">3</div>
+    <div class="step-body">
+      <h3>运行 eval</h3>
+      <div class="code-wrap"><div class="code-head"><span>终端 · 运行与查看</span><span class="ch-dot"><i></i><i></i><i></i></span></div><pre>promptfoo eval                <span class="c"># 在含 promptfooconfig.yaml 的目录执行</span>
+promptfoo view                <span class="c"># 打开 Web 可视化对比</span>
+promptfoo eval --output out.json --no-cache --no-share</pre></div>
+      <p>每次运行对「每个 prompt × provider × test」组合发起真实调用，逐一跑断言，汇总为 CLI 表格与 JSON / HTML 输出。</p>
+  <figure>
+    <img src="figures/tutorial-eval-setup.png" alt="promptfoo eval 运行界面" loading="lazy">
+    <figcaption>图 · 官方 eval setup 界面——选择配置、目标与 runner 后批量执行。</figcaption>
+  </figure>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-no">4</div>
+    <div class="step-body">
+      <h3>接入 opencode:sdk，驱动专家团</h3>
+      <div class="code-wrap" data-dialog="d-config" title="点击查看 opencode:sdk 配置详解"><div class="code-head"><span>promptfooconfig.yaml · opencode:sdk</span><span class="ch-dot"><i></i><i></i><i></i></span></div><pre><span class="c"># 本插件 run_eval.py 生成的核心配置（真实运行验证过）</span>
+providers:
+  - id: opencode:sdk
+    config:
+      working_dir: C:/project/mobile_intern/workspaces/test01-eval   <span class="c"># 评测工作区</span>
+      agent: software-team-lead                                       <span class="c"># 被测团长</span>
+      provider_id: deepseek
+      model: deepseek-v4-flash
+      apiKey: sk-...                                                  <span class="c"># deepseek 必须显式注入</span>
+      tools: { read: true, grep: true, glob: true, list: true, write: true, edit: true, todowrite: true, lsp: true, bash: true }
+      permission: { read: allow, write: allow, edit: allow, task: allow, bash: {<span class="s">'*'</span>: deny, <span class="s">'node *'</span>: allow, <span class="s">'git status*'</span>: allow}, external_directory: deny, doom_loop: deny, question: deny }
+prompts:
+  - '修复预置工具库中的 Bug……'            <span class="c"># 即 case 的 prompt</span>
+tests:
+  - vars: {}
+    assert:
+      - type: javascript
+        value: |
+          const fsp = import('node:fs');
+          return fsp.then(m =&gt; m.default.existsSync({output_dir_abs} + '/utils/utils.js'));</pre>
+  <figure>
+    <img src="figures/tutorial-view-results.png" alt="promptfoo view 结果对比界面" loading="lazy">
+    <figcaption>图 · promptfoo view——同一视图对比多个 candidate 的逐 case 输出（对应课题任务图 3 的界面）。</figcaption>
+  </figure></div>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <strong>实测要点</strong>：① javascript 断言运行在同步函数体中，<code>require</code> / 顶层 <code>await</code> 不可用，用 <code>import('node:fs')</code> + promise 返回值；② 断言正则由 JS 引擎编译，Python 风格 <code>(?i)</code> 会报 <code>Invalid group</code>；③ 有断言失败时 promptfoo 退出码为 100（评估本身完成）。
+  </div>
+</section>
+
+<!-- ============ 04 真实演示 ============ -->
+<section class="content-section" id="demo">
+  <p class="eyebrow">04 · Live Demo</p>
+  <h2>演示：真实评测软件开发专家团</h2>
+  <p class="lead">通过插件链路发起，Promptfoo 驱动真实 OpenCode 会话，专家团完成修复与验证，结果回写入统一证据。</p>
+
+  <figure class="fig-frame">
+    <svg viewBox="0 0 980 215" role="img" aria-label="评测链路：case 到证据"><defs>
+        <marker id="a3" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto"><path d="M0,0 L8,3.5 L0,7 Z" fill="#7c8085"/></marker>
+      </defs>
+      <g font-family="'IBM Plex Sans',sans-serif" font-size="11.5">
+        <rect x="0" y="20" width="110" height="52" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="55" y="40" text-anchor="middle" fill="#121314" font-weight="600">case</text>
+        <text x="55" y="56" text-anchor="middle" fill="#7c8085">YAML 定义</text>
+        <line x1="112" y1="46" x2="132" y2="46" stroke="#7c8085" marker-end="url(#a3)"/>
+        <rect x="134" y="20" width="130" height="52" rx="8" fill="#e6f7ff" stroke="#1890ff"/>
+        <text x="199" y="40" text-anchor="middle" fill="#121314" font-weight="600">run_eval.py</text>
+        <text x="199" y="56" text-anchor="middle" fill="#7c8085">生成配置 + 编排</text>
+        <line x1="266" y1="46" x2="286" y2="46" stroke="#7c8085" marker-end="url(#a3)"/>
+        <rect x="288" y="20" width="112" height="52" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="344" y="40" text-anchor="middle" fill="#121314" font-weight="600">promptfoo eval</text>
+        <text x="344" y="56" text-anchor="middle" fill="#7c8085">--no-cache</text>
+        <line x1="402" y1="46" x2="422" y2="46" stroke="#7c8085" marker-end="url(#a3)"/>
+        <rect x="424" y="20" width="144" height="52" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="496" y="40" text-anchor="middle" fill="#121314" font-weight="600">opencode:sdk</text>
+        <text x="496" y="56" text-anchor="middle" fill="#7c8085">启动 OpenCode server</text>
+        <line x1="570" y1="46" x2="590" y2="46" stroke="#7c8085" marker-end="url(#a3)"/>
+        <rect x="592" y="20" width="164" height="52" rx="8" fill="#fff" stroke="#1890ff"/>
+        <text x="674" y="38" text-anchor="middle" fill="#121314" font-weight="600">software-team-lead</text>
+        <text x="674" y="55" text-anchor="middle" fill="#7c8085">团长 · 委派 / 验收 / 汇总</text>
+        <line x1="758" y1="46" x2="778" y2="46" stroke="#7c8085" marker-end="url(#a3)"/>
+        <rect x="780" y="20" width="150" height="52" rx="8" fill="#fff" stroke="#dbdcdc"/>
+        <text x="855" y="40" text-anchor="middle" fill="#121314" font-weight="600">断言 + 产物</text>
+        <text x="855" y="56" text-anchor="middle" fill="#7c8085">→ summary.json</text>
+        <g fill="#7c8085">
+          <rect x="479" y="106" width="190" height="34" rx="8" fill="#f0f2f5" stroke="#dbdcdc"/>
+          <text x="574" y="127" text-anchor="middle">software-product-manager</text>
+          <rect x="699" y="106" width="150" height="34" rx="8" fill="#f0f2f5" stroke="#dbdcdc"/>
+          <text x="774" y="127" text-anchor="middle">software-architect</text>
+          <rect x="499" y="150" width="150" height="34" rx="8" fill="#f0f2f5" stroke="#dbdcdc"/>
+          <text x="574" y="171" text-anchor="middle">software-engineer</text>
+          <rect x="744" y="150" width="60" height="34" rx="8" fill="#f0f2f5" stroke="#dbdcdc"/>
+          <text x="774" y="171" text-anchor="middle">QA</text>
+        </g>
+        <line x1="674" y1="74" x2="574" y2="104" stroke="#c9cdd3" stroke-dasharray="3 3"/>
+        <line x1="674" y1="74" x2="774" y2="104" stroke="#c9cdd3" stroke-dasharray="3 3"/>
+        <line x1="674" y1="74" x2="574" y2="148" stroke="#c9cdd3" stroke-dasharray="3 3"/>
+        <line x1="674" y1="74" x2="774" y2="148" stroke="#c9cdd3" stroke-dasharray="3 3"/>
+        <text x="490" y="208" text-anchor="middle" fill="#7c8085">团员经 task 委派（subagent_type=Agent ID），专业结论必须来自子任务，团长验收后汇总</text>
+      </g>
+    </svg>
+    <figcaption>评测链路：case → run_eval.py → promptfoo → opencode:sdk → 真实专家团 → 断言 + 产物 → summary.json 统一证据。</figcaption>
+  </figure>
+
+  <div class="result-hero">
+    <div class="result-score">1.0</div>
+    <div class="result-meta">
+      <div>评分 score · <span class="badge b-pass"><span class="bi">✓</span>PASS</span> · 4 / 4 断言通过</div>
+      <div>eval <code>eval-rUe-2026-08-03T15:39:02</code> · 会话 <code>ses_037b8b519ffeGNoIeqIX7BRdT8</code></div>
+      <div>真实运行耗时 <code>100.1 s</code> · 响应长度 <code>5096</code>（含元数据） · 模型 <code>deepseek-v4-flash</code></div>
+    </div>
+  </div>
+
+  <div class="editorial-grid">
+    <div class="aside">
+      <div class="aside-label">Assertion Results</div>
+      <h3>逐断言判定</h3>
+      <p>两条 javascript 断言验证真实修复写盘（文件系统），regex 与 contains 验证输出文本。</p>
+    </div>
+    <div class="tbl-wrap"><table>
+      <tr><th>断言</th><th>类型</th><th>结果</th><th>判定依据</th></tr>
+      <tr><td>utils.js 修复正确</td><td><code>javascript</code></td><td><span class="badge b-pass"><span class="bi">✓</span>PASS</span></td><td>文件含 <code>a + b</code> 且含 <code>Set</code></td></tr>
+      <tr><td>utils.js 存在</td><td><code>javascript</code></td><td><span class="badge b-pass"><span class="bi">✓</span>PASS</span></td><td><code>fs.existsSync</code> 验证产物</td></tr>
+      <tr><td>测试通过证据</td><td><code>regex</code></td><td><span class="badge b-pass"><span class="bi">✓</span>PASS</span></td><td>输出含 PASS / 通过</td></tr>
+      <tr><td>修复对象提及</td><td><code>contains</code></td><td><span class="badge b-pass"><span class="bi">✓</span>PASS</span></td><td>输出含 <code>unique</code></td></tr>
+    </table></div>
+  </div>
+
+  <div class="editorial-grid">
+    <div class="aside">
+      <div class="aside-label">Agent Output</div>
+      <h3>团长真实交付总结</h3>
+      <p>这是 OpenCode 专家团真实会话的最终输出（节选）——委派、修复、QA 回归与验收全部真实发生。</p>
+    </div>
+  <div class="code-wrap" data-dialog="d-agent-out" title="点击查看完整交付总结（真实输出）"><div class="code-head"><span>agent 输出 · software-team-lead</span><span class="ch-dot"><i></i><i></i><i></i></span></div><pre><span class="c"># 团长最终输出（节选，真实运行结果）</span>
+# 交付总结 · 工具库 Bug 修复与回归验证
+## TL;DR
+eval-runs/bugfix-utils-01/bugfix-utils/utils/utils.js 中两处预置 Bug 已修复，
+QA 回归验证 <span class="g">3/3 全部通过（PASS 3 / FAIL 0）</span>，无返工、无遗留问题。
+## 修复说明
+由软件工程师寇豆码（task_id: ses_037b87b42f...）修改，仅改动 utils/utils.js：
+  add(a, b)    : return a - b  →  return a + b    （减法误写，改为两数之和）
+  unique(arr)  : return arr    →  return [...new Set(arr)]（直接返回原数组未去重）
+导出结构 module.exports = { add, unique } 保持不变；未在指定目录外创建任何文件。
+## 测试运行结果
+node --test ... 3 passed, 0 failed</pre></div>
+  </div>
+
+  <div class="editorial-grid">
+    <div class="aside">
+      <div class="aside-label">Evidence</div>
+      <h3>证据三件套</h3>
+      <p>产物、会话、统一 JSON——全部可回溯。</p>
+    </div>
+    <div class="cards cards-3">
+      <div class="card"><h4>产物证据</h4><p><code>eval-runs/bugfix-utils-01/bugfix-utils/utils/utils.js</code><br>add → <code>a + b</code>，unique → <code>new Set</code>，时间戳与运行一致。</p></div>
+      <div class="card"><h4>会话证据</h4><p>主会话 <code>ses_037b8b51...</code>；工程师子会话 <code>ses_037b87b4...</code>（task_id 可追溯）。</p></div>
+      <div class="card"><h4>统一证据</h4><p><code>summary.json</code>：逐 case 断言、评分、产物路径、session、异常——下游本地 Web / 优化闭环的数据入口。</p></div>
+    </div>
+  </div>
+
+  <div class="editorial-grid">
+    <div class="aside">
+      <div class="aside-label">Case Suite</div>
+      <h3>内置 case 一览</h3>
+      <p>覆盖课题任务三类任务，每个 case 声明任务、评判方法、主指标与异常判定。</p>
+    </div>
+    <div class="tbl-wrap"><table>
+      <tr><th>case</th><th>类型</th><th>任务</th><th>评测方法</th></tr>
+      <tr data-dialog="d-case-todo-cli" title="点击查看 case 完整定义（提示词/断言/主指标）"><td><code>todo-cli</code></td><td>结构化</td><td>Node.js CLI Todo 应用 + 测试</td><td>产物断言 + 文本断言</td></tr>
+      <tr data-dialog="d-case-prd-priority" title="点击查看 case 完整定义（提示词/断言/主指标）"><td><code>prd-priority</code></td><td>混合式</td><td>二手书交易小程序 PRD（P0/P1/P2）</td><td>硬约束断言 + 文档产物</td></tr>
+      <tr data-dialog="d-case-feature-design" title="点击查看 case 完整定义（提示词/断言/主指标）"><td><code>feature-design</code></td><td>开放式</td><td>协作白板 MVP 后端 API 设计</td><td>文档产物 + 接口要素（无硬性通过率）</td></tr>
+      <tr data-dialog="d-case-bugfix-utils" title="点击查看 case 完整定义（提示词/断言/主指标）"><td><code>bugfix-utils</code></td><td>混合式</td><td>修复预置工具库 Bug + 回归验证</td><td>修复断言 + 测试证据（已真实运行 PASS）</td></tr>
+    </table></div>
+  </div>
+
+  <div class="callout">
+    <strong>插件自测</strong>：29 项检查全部通过（静态结构 8 / 功能 9 / 解析内部 6 / 集成环境 5 / 端到端 1），测试报告已按 MobileWork Design System 可视化：<code>mobilework-expert-eval-plugin/test-reports/test-report.html</code>。
+  </div>
+</section>
+
+<!-- ============ 05 排障 ============ -->
+<section class="content-section" id="debug">
+  <p class="eyebrow">05 · Debugging</p>
+  <h2>真实运行排障与适配</h2>
+  <p class="lead">从「样例能跑」到「专家团真实评测跑通」，排除了 4 个根因——这些经验直接写入插件文档，是可复用工程资产。</p>
+
+  <div class="col-grid">
+    <div class="col" data-dialog="d-debug" title="点击查看完整排障过程"><div class="tag">Root Cause 01</div><h5>API key 映射缺失</h5><p><code>deepseek</code> 不在 promptfoo opencode:sdk 的 <code>getApiKey</code> env 映射表（仅 anthropic / openai / google）。</p></div>
+    <div class="col" data-dialog="d-debug" title="点击查看完整排障过程"><div class="tag">Root Cause 02</div><h5>agent 权限优先</h5><p>权限以 <code>agents/*.md</code> frontmatter 为准且优先于 provider <code>permission</code>；非交互下 <code>bash: ask</code> 阻塞。</p></div>
+    <div class="col" data-dialog="d-debug" title="点击查看完整排障过程"><div class="tag">Root Cause 03</div><h5>数据库并发写</h5><p>多个 opencode server 并发写全局 <code>opencode.db</code>，SQLite 外键约束失败。</p></div>
+    <div class="col" data-dialog="d-debug" title="点击查看完整排障过程"><div class="tag">Root Cause 04</div><h5>SDK 默认超时</h5><p>opencode SDK <code>session.prompt</code> 默认 provider 超时 300s，长任务被 cancel。</p></div>
+    <div class="col" data-dialog="d-debug" title="点击查看完整排障过程"><div class="tag">Solution</div><h5>四项适配</h5><p><code>--api-key</code> 注入 · 评测工作区 <code>test01-eval</code> · 独立 <code>XDG_DATA_HOME</code> · case 规模控制。</p></div>
+  </div>
+</section>
+
+<!-- ============ 06 对照 ============ -->
+<section class="content-section" id="checklist">
+  <p class="eyebrow">06 · Checklist</p>
+  <h2>与课题任务要求对照</h2>
+  <p class="lead">当前插件在课题任务硬门槛上的落点与状态。</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>课题任务要求</th><th>当前落点</th><th>状态</th></tr>
+    <tr><td>Promptfoo 真实入链（G4 / 5.1）</td><td><code>opencode:sdk</code> 执行 + assert 评判，结果入 <code>summary.json</code> 统一证据</td><td><span class="badge b-pass"><span class="bi">✓</span>已打通</span></td></tr>
+    <tr><td>真实 OpenCode（G3）</td><td>真实会话驱动 software-team-lead，委派 4 团员，产物写盘</td><td><span class="badge b-pass"><span class="bi">✓</span>已验证</span></td></tr>
+    <tr><td>多方法评估（G13 / 3.3）</td><td>三类任务匹配断言策略；llm-rubric 可选启用（记录裁判偏差）</td><td><span class="badge b-accent"><span class="bi">→</span>就绪</span></td></tr>
+    <tr><td>可重复基准（G9 / 6.3）</td><td><code>--repeat 5</code>、<code>--no-cache</code>、<code>maxConcurrency:1</code>、run 目录隔离</td><td><span class="badge b-accent"><span class="bi">→</span>就绪</span></td></tr>
+    <tr><td>异常隔离（G15）</td><td>超时 / 崩溃 / 空结果记为异常，不进 PASS 统计</td><td><span class="badge b-accent"><span class="bi">→</span>就绪</span></td></tr>
+    <tr><td>本地 Web / 人工建议 / 优化副本</td><td>后续模块，<code>summary.json</code> 为统一数据入口</td><td><span class="badge b-warn"><span class="bi">○</span>待扩展</span></td></tr>
+  </table></div>
+</section>
+
+
+
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <img class="cmcc-logo" src="figures/brand/china-mobile-logo.png" alt="中国移动">
+      <div class="brand"><span class="dot"></span>Promptfoo Expert Eval · 2026 SWARM MobileWork 课题</div>
+    </div>
+    <div class="footer-right">
+      <span>Design System: MobileWork Design System（中国移动 · 九天生态）</span>
+    </div>
+  </div>
+</footer>
+
+
+<dialog id="d-case-todo-cli" class="detail-dialog">
+    <div class="dlg-head"><h3>case · todo-cli</h3><button class="dlg-close" data-close aria-label="关闭">✕</button></div>
+    <div class="dlg-body">
+      <div class="tbl-wrap"><table>
+      <tr><th style="width:140px">字段</th><th>值</th></tr>
+      <tr><td>id</td><td><code>todo-cli</code></td></tr>
+      <tr><td>title</td><td>Todo CLI 应用开发（结构化）</td></tr>
+      <tr><td>type</td><td>结构化（<code>structured</code>）</td></tr>
+      <tr><td>output_dir</td><td><code>eval-runs/{run_id}/todo-cli</code></td></tr>
+      <tr><td>main_metric</td><td>断言通过数 / 断言总数（5 项）</td></tr>
+      <tr><td>anomaly_rules</td><td>未形成有效终态（无输出/超时/崩溃）记异常，不混入正式统计</td></tr>
+      <tr><td>bash_allow</td><td><code>node *, git status*, git diff*, git log*</code></td></tr>
+    </table></div>
+      <h4>Prompt（发送给团长的任务文本）</h4>
+      <pre class="dlg-code">请开发一个最小的 Node.js CLI Todo 应用并完成验证。使用快速流程完成，不要走完整 SOP
+（不需要 PRD 和架构设计文档），重点是把功能实现并验证通过。
+
+要求：
+1. 按需委派工程师与 QA 工程师（可快速模式），由团长验收后汇总。
+2. 功能：支持 add / list / complete 三个子命令，数据持久化到 todo.json。
+3. 产物全部放入目录：{output_dir}（相对当前工作目录）。
+   至少包含：app.js（入口）、package.json（含 &quot;main&quot;: &quot;app.js&quot;）、测试文件（如 app.test.js，使用 node:test）。
+   不要创建 {output_dir} 之外的业务文件。
+4. 编写至少一个测试并实际运行（node --test 或等效方式），记录测试结果。
+5. 不要询问用户任何问题，直接完成。
+
+最终回复必须包含：产物文件清单、测试结果（PASS/FAIL）、TL;DR 总结。
+</pre>
+      <h4>断言（assertions）</h4><pre class="dlg-code">- type: contains
+  value: app.js
+- type: regex
+  value: ([Tt]est|测试)
+- type: regex
+  value: ([Pp]ass|通过|[Oo][Kk])
+- type: javascript
+  value: &#x27;const fsp = import(&#x27;&#x27;node:fs&#x27;&#x27;);
+
+    return fsp.then(m =&gt; m.default.existsSync({output_dir_abs} + &#x27;&#x27;/app.js&#x27;&#x27;));
+
+    &#x27;
+- type: javascript
+  value: &#x27;const fsp = import(&#x27;&#x27;node:fs&#x27;&#x27;);
+
+    return fsp.then(m =&gt; m.default.existsSync({output_dir_abs} + &#x27;&#x27;/package.json&#x27;&#x27;));
+
+    &#x27;
+</pre>
+      
+    </div>
+  </dialog><dialog id="d-case-prd-priority" class="detail-dialog">
+    <div class="dlg-head"><h3>case · prd-priority</h3><button class="dlg-close" data-close aria-label="关闭">✕</button></div>
+    <div class="dlg-body">
+      <div class="tbl-wrap"><table>
+      <tr><th style="width:140px">字段</th><th>值</th></tr>
+      <tr><td>id</td><td><code>prd-priority</code></td></tr>
+      <tr><td>title</td><td>二手书交易小程序 PRD（混合式）</td></tr>
+      <tr><td>type</td><td>混合式（<code>hybrid</code>）</td></tr>
+      <tr><td>output_dir</td><td><code>eval-runs/{run_id}/prd-priority</code></td></tr>
+      <tr><td>main_metric</td><td>硬约束断言通过率（4 项）+ PRD 文档产物</td></tr>
+      <tr><td>anomaly_rules</td><td>输出与需求语言不一致或缺失需求池结构记异常并说明</td></tr>
+      <tr><td>bash_allow</td><td><code>默认白名单</code></td></tr>
+    </table></div>
+      <h4>Prompt（发送给团长的任务文本）</h4>
+      <pre class="dlg-code">请以软件开发团队团长身份，为一个&quot;二手书交易小程序&quot;组织产出简单 PRD 并完成验收汇报。
+
+要求：
+1. 委派产品经理（software-product-manager）编写简单 PRD，并将完整 PRD 文档写入目录：{output_dir}（如 docs/prd.md）。
+2. PRD 必须包含：产品目标、用户故事、需求池（明确标注 P0 / P1 / P2 三级优先级，每级至少 2 条）、待确认问题。
+3. 团长按 PRD 验收标准验收后，给出交付总结（TL;DR + 文件清单 + 剩余风险）。
+4. 不要询问用户任何问题，直接完成。
+
+最终回复必须包含：PRD 文件路径、P0/P1/P2 各包含的需求条数、交付总结。
+</pre>
+      <h4>断言（assertions）</h4><pre class="dlg-code">- type: contains
+  value: P0
+- type: contains
+  value: P1
+- type: contains
+  value: P2
+- type: regex
+  value: (待确认|[Oo]pen [Qq]uestion|[Qq]uestion|[Rr]isk)
+- type: javascript
+  value: &#x27;const fsp = import(&#x27;&#x27;node:fs&#x27;&#x27;);
+
+    return fsp.then(m =&gt; m.default.existsSync({output_dir_abs} + &#x27;&#x27;/docs/prd.md&#x27;&#x27;));
+
+    &#x27;
+</pre>
+      
+    </div>
+  </dialog><dialog id="d-case-feature-design" class="detail-dialog">
+    <div class="dlg-head"><h3>case · feature-design</h3><button class="dlg-close" data-close aria-label="关闭">✕</button></div>
+    <div class="dlg-body">
+      <div class="tbl-wrap"><table>
+      <tr><th style="width:140px">字段</th><th>值</th></tr>
+      <tr><td>id</td><td><code>feature-design</code></td></tr>
+      <tr><td>title</td><td>在线协作白板 MVP 后端设计（开放式）</td></tr>
+      <tr><td>type</td><td>开放式（<code>open-ended</code>）</td></tr>
+      <tr><td>output_dir</td><td><code>eval-runs/{run_id}/feature-design</code></td></tr>
+      <tr><td>main_metric</td><td>设计文档产物 + 接口要素覆盖（开放任务不使用确定性通过率）</td></tr>
+      <tr><td>anomaly_rules</td><td>无方案或设计文档缺失记异常；高自主路径差异不判失败</td></tr>
+      <tr><td>bash_allow</td><td><code>默认白名单</code></td></tr>
+    </table></div>
+      <h4>Prompt（发送给团长的任务文本）</h4>
+      <pre class="dlg-code">请以软件开发团队团长身份，组织团队为一个&quot;实时在线协作白板 MVP&quot;完成后端 API 设计方案（不要求完整代码实现）。
+
+要求：
+1. 委派产品经理提炼需求要点，委派架构师输出系统设计（实现方案、技术选型、REST API 接口定义、数据结构、任务分解不超过 5 个任务）。
+2. 设计文档写入目录：{output_dir}（如 docs/system_design.md、docs/class-diagram.mermaid）。
+3. 团长对设计进行验收（对照 API 覆盖与任务可执行性），并输出交付总结（TL;DR、方案要点、文件清单、下一步建议）。
+4. 不要询问用户任何问题，直接完成。
+
+最终回复必须包含：设计文档路径、API 接口清单、任务分解数量、交付总结。
+</pre>
+      <h4>断言（assertions）</h4><pre class="dlg-code">- type: regex
+  value: ([Aa][Pp][Ii]|接口|[Ee]ndpoint|/api/)
+- type: regex
+  value: (方案|[Dd]esign|[Aa]rchitecture|设计)
+- type: javascript
+  value: &quot;const fsp = import(&#x27;node:fs&#x27;);\nreturn fsp.then(m =&gt; {\n  const fs = m.default;\n\
+    \  const dir = {output_dir_abs};\n  if (!fs.existsSync(dir)) return false;\n \
+    \ const walk = (d) =&gt; {\n    let out = [];\n    for (const f of fs.readdirSync(d))\
+    \ {\n      const p = d + &#x27;/&#x27; + f;\n      if (fs.statSync(p).isDirectory()) out\
+    \ = out.concat(walk(p));\n      else out.push(f);\n    }\n    return out;\n  };\n\
+    \  return walk(dir).some(f =&gt; f.endsWith(&#x27;.md&#x27;));\n});\n&quot;
+</pre>
+      
+    </div>
+  </dialog><dialog id="d-case-bugfix-utils" class="detail-dialog">
+    <div class="dlg-head"><h3>case · bugfix-utils</h3><button class="dlg-close" data-close aria-label="关闭">✕</button></div>
+    <div class="dlg-body">
+      <div class="tbl-wrap"><table>
+      <tr><th style="width:140px">字段</th><th>值</th></tr>
+      <tr><td>id</td><td><code>bugfix-utils</code></td></tr>
+      <tr><td>title</td><td>工具库 Bug 修复与回归验证（混合式）</td></tr>
+      <tr><td>type</td><td>混合式（<code>hybrid</code>）</td></tr>
+      <tr><td>output_dir</td><td><code>eval-runs/{run_id}/bugfix-utils</code></td></tr>
+      <tr><td>main_metric</td><td>修复断言（2 项）+ 测试证据</td></tr>
+      <tr><td>anomaly_rules</td><td>fixture 缺失或测试未运行记异常</td></tr>
+      <tr><td>bash_allow</td><td><code>node *, git status*, git diff*, git log*</code></td></tr>
+    </table></div>
+      <h4>Prompt（发送给团长的任务文本）</h4>
+      <pre class="dlg-code">请以软件开发团队团长身份，修复预置在目录 {output_dir}/utils 中的工具库 Bug，并完成回归验证。
+
+情况说明：
+- utils/utils.js 中的 add(a, b) 返回值错误（应为两数之和），unique(arr) 实现有误（应返回去重后的数组）。
+- utils/utils.test.js 是 node:test 编写的测试，目前应处于失败状态。
+要求：
+1. 委派工程师修复 utils.js，委派 QA 工程师运行测试（node --test 或等效方式）。
+2. 修复与测试全部在 {output_dir} 目录内完成，不创建该目录之外的文件。
+3. 最终回复必须包含：修复说明（改了什么、为什么）、测试运行结果（PASS/FAIL 统计）、交付总结。
+
+不要询问用户任何问题，直接完成。
+</pre>
+      <h4>断言（assertions）</h4><pre class="dlg-code">- type: javascript
+  value: &quot;const fsp = import(&#x27;node:fs&#x27;);\nreturn fsp.then(m =&gt; {\n  const fs = m.default;\n\
+    \  const src = fs.readFileSync({output_dir_abs} + &#x27;/utils/utils.js&#x27;, &#x27;utf8&#x27;);\n\
+    \  return src.includes(&#x27;a + b&#x27;) &amp;&amp; src.includes(&#x27;Set&#x27;);\n});\n&quot;
+- type: javascript
+  value: &#x27;const fsp = import(&#x27;&#x27;node:fs&#x27;&#x27;);
+
+    return fsp.then(m =&gt; m.default.existsSync({output_dir_abs} + &#x27;&#x27;/utils/utils.js&#x27;&#x27;));
+
+    &#x27;
+- type: regex
+  value: ([Pp]ass|通过)
+- type: contains
+  value: unique
+</pre>
+      <h4>Setup Fixtures（预置文件）</h4><pre>utils/utils.js</pre><pre class="dlg-code">// 工具库（含故意引入的 Bug，供评测使用）
+&#x27;use strict&#x27;;
+
+// BUG: 应为 a + b，当前实现为 a - b
+function add(a, b) {
+  return a - b;
+}
+
+// BUG: 未做去重，当前直接返回原数组
+function unique(arr) {
+  return arr;
+}
+
+module.exports = { add, unique };
+</pre><pre>utils/utils.test.js</pre><pre class="dlg-code">&#x27;use strict&#x27;;
+const test = require(&#x27;node:test&#x27;);
+const assert = require(&#x27;node:assert/strict&#x27;);
+const { add, unique } = require(&#x27;./utils.js&#x27;);
+
+test(&#x27;add(2, 3) === 5&#x27;, () =&gt; {
+  assert.equal(add(2, 3), 5);
+});
+
+test(&#x27;add(-1, 1) === 0&#x27;, () =&gt; {
+  assert.equal(add(-1, 1), 0);
+});
+
+test(&#x27;unique([1, 2, 2, 3]) =&gt; [1, 2, 3]&#x27;, () =&gt; {
+  assert.deepEqual(unique([1, 2, 2, 3]), [1, 2, 3]);
+});
+</pre>
+    </div>
+  </dialog><dialog id="d-agent-out" class="detail-dialog">
+    <div class="dlg-head"><h3>agent 完整交付总结 · software-team-lead（真实运行 bugfix-utils）</h3><button class="dlg-close" data-close aria-label="关闭">✕</button></div>
+    <div class="dlg-body">
+      <p class="dlg-note">来源：<code>test-reports/e2e-evidence/bugfix-utils-results.json</code> · eval <code>eval-rUe-2026-08-03T15:39:02</code> · 会话 <code>ses_037b8b519ffeGNoIeqIX7BRdT8</code></p>
+      <pre class="dlg-code"># 交付总结 · 工具库 Bug 修复与回归验证
+
+## TL;DR
+
+`eval-runs/bugfix-utils-01/bugfix-utils/utils/utils.js` 中两处预置 Bug 已修复，QA 回归验证 **3/3 全部通过（PASS 3 / FAIL 0）**，无返工、无遗留问题。
+
+## 修复说明（改了什么、为什么）
+
+由软件工程师寇豆码（task_id: `ses_037b87b42ffeCy2x7pDsWRstFa`）修改，仅改动 `utils/utils.js`：
+
+| 函数 | 修改前（Bug） | 修改后 | 原因 |
+|---|---|---|---|
+| `add(a, b)` | `return a - b;` | `return a + b;` | 减法误写导致返回值错误，改为两数之和，符合语义与测试断言 |
+| `unique(arr)` | `return arr;` | `return [...new Set(arr)];` | 直接返回原数组未去重；改用 `Set` 去重并通过展开运算符创建**新数组**，不修改原数组 |
+
+修复后文件内容：
+```javascript
+// 工具库（含故意引入的 Bug，供评测使用）
+&#x27;use strict&#x27;;
+
+// 修复：返回两数之和
+function add(a, b) {
+  return a + b;
+}
+
+// 修复：返回去重后的新数组（利用 Set 保证唯一性），不修改原数组
+function unique(arr) {
+  return [...new Set(arr)];
+}
+
+module.exports = { add, unique };
+```
+
+导出结构 `module.exports = { add, unique }` 保持不变；未修改 `utils.test.js`，未在指定目录外创建任何文件。
+
+## 测试运行结果（PASS/FAIL 统计）
+
+由 QA 工程师严过关（task_id: `ses_037b7e23effe3o69L4OiqOUN9u`）在 `bugfix-utils` 目录内执行：
+
+```
+node --test utils/utils.test.js
+```
+
+```
+✔ add(2, 3) === 5 (0.4889ms)
+✔ add(-1, 1) === 0 (0.0701ms)
+✔ unique([1, 2, 2, 3]) =&gt; [1, 2, 3] (0.595ms)
+
+tests 3 | pass 3 | fail 0 | skipped 0 | todo 0
+```
+
+- **总用例：3　PASS：3　FAIL：0**
+- 智能路由判定：**PASS（验收通过）**，第 1 轮即通过，无需返工，无 Known Issues。
+- 完整性证据：QA 对 `utils.js` / `utils.test.js` 运行前后 SHA256 哈希完全一致，确认测试过程未改动源码与测试文件。
+
+## 交付概览
+
+- 调用角色：软件工程师（1 实例）、QA 工程师（1 实例），阶段串行执行（修复 → 验证）。
+- 验收状态：工程师修复产出（团长复核文件确认）、QA 回归报告均已验收通过。
+- 文件范围：全部操作限制在 `eval-runs/bugfix-utils-01/bugfix-utils` 目录内，目录内仅保留 `utils/utils.js` 与 `utils/utils.test.js`。
+- 剩余风险：无。
+
+## 下一步建议
+
+- 如需进一步加固，可将 `unique` 对非数组入参（如 `null`/`undefined`）做防御性校验，并补充对应测试用例。
+- 当前回归已验证通过，可直接合入主干或发布。</pre>
+    </div>
+  </dialog><dialog id="d-config" class="detail-dialog">
+    <div class="dlg-head"><h3>opencode:sdk 配置详解</h3><button class="dlg-close" data-close aria-label="关闭">✕</button></div>
+    <div class="dlg-body">
+      <div class="tbl-wrap"><table>
+        <tr><th style="width:180px">配置项</th><th>值</th><th>说明</th></tr>
+        <tr><td><code>working_dir</code></td><td><code>workspaces/test01-eval</code></td><td>评测专用工作区（权限已适配非交互；原始工作区只读）</td></tr>
+        <tr><td><code>agent</code></td><td><code>software-team-lead</code></td><td>被测团长：OpenCode 从工作区加载 agent 定义并驱动真实会话</td></tr>
+        <tr><td><code>provider_id</code> / <code>model</code></td><td><code>deepseek</code> / <code>deepseek-v4-flash</code></td><td>模型凭据；deepseek 不在 promptfoo 的 env 映射表，须 <code>--api-key</code> 注入</td></tr>
+        <tr><td><code>tools</code></td><td>read/grep/glob/list/write/edit/todowrite/lsp/bash</td><td>授予评测运行所需工具面</td></tr>
+        <tr><td><code>permission.bash</code></td><td>白名单 allow，其余 deny</td><td>非交互安全面：node/git 只读命令放行，rm/del 类 deny</td></tr>
+        <tr><td><code>permission</code> 其他</td><td>external_directory / doom_loop / question → deny</td><td>评测隔离：不越界、不循环、不提问</td></tr>
+        <tr><td><code>task</code></td><td>allow</td><td>团长委派 4 团员（subagent）必需</td></tr>
+      </table></div>
+      <h4>完整 YAML（run_eval.py 生成）</h4>
+      <pre class="dlg-code">providers:
+  - id: opencode:sdk
+    config:
+      working_dir: C:/project/mobile_intern/workspaces/test01-eval
+      agent: software-team-lead
+      provider_id: deepseek
+      model: deepseek-v4-flash
+      apiKey: sk-...
+      tools:
+        read: true
+        grep: true
+        glob: true
+        list: true
+        write: true
+        edit: true
+        todowrite: true
+        lsp: true
+        bash: true
+      permission:
+        read: allow
+        grep: allow
+        glob: allow
+        list: allow
+        lsp: allow
+        write: allow
+        edit: allow
+        todowrite: allow
+        task: allow
+        webfetch: deny
+        external_directory: deny
+        doom_loop: deny
+        question: deny
+        skill: deny
+        bash:
+          '*': deny
+          'node *': allow
+          'git status*': allow
+          'git diff*': allow
+          'git log*': allow
+prompts:
+  - &lt;case prompt 文本&gt;
+tests:
+  - vars: {}
+    assert:
+      - type: javascript
+        value: |
+          const fsp = import('node:fs');
+          return fsp.then(m =&gt; m.default.existsSync({output_dir_abs} + '/utils/utils.js'));</pre>
+    </div>
+  </dialog><dialog id="d-debug" class="detail-dialog">
+    <div class="dlg-head"><h3>真实运行排障过程（4 个根因）</h3><button class="dlg-close" data-close aria-label="关闭">✕</button></div>
+    <div class="dlg-body">
+      <h4>① API key 映射缺失</h4>
+      <p class="dlg-note">现象：报 <code>Missing OPENCODE_API_KEY</code>。排查：读 promptfoo 源码发现 opencode:sdk 的 <code>getApiKey</code> 只映射 anthropic/openai/google 的环境变量，deepseek 不在表内——提示名有误导性，实际缺的是模型 provider 的 key。解决：<code>--api-key</code> 显式注入 + <code>--provider deepseek</code>。</p>
+      <h4>② agent 权限优先导致会话中止</h4>
+      <p class="dlg-note">现象：agent 运行 5 分钟后 Aborted，最终输出丢失。排查：opencode 日志显示 <code>asking permission=bash action=ask</code>；agent 权限以 <code>agents/*.md</code> frontmatter 为准且优先于 provider <code>permission</code>。解决：创建评测专用工作区 <code>test01-eval</code>，把 bash 改为白名单 allow（保留 rm/del 类 deny）、external_directory/doom_loop/question → deny；原始工作区与专家包保持只读。</p>
+      <h4>③ opencode 全局数据库并发写</h4>
+      <p class="dlg-note">现象：<code>SQLite FOREIGN KEY constraint failed</code>。排查：promptfoo 每次 eval 启动独立 opencode server，多个 server 并发写同一 <code>~/.local/share/opencode/opencode.db</code>。解决：run_eval.py 为每个 run 设置独立 <code>XDG_DATA_HOME</code>（<code>&lt;run-dir&gt;/opencode-data/</code>），同时保证环境隔离可复现。</p>
+      <h4>④ opencode SDK 默认 5 分钟超时</h4>
+      <p class="dlg-note">现象：完整 SOP 任务超过 300s 被 cancel。排查：SDK 文档确认 <code>session.prompt</code> 默认 provider 超时 300000ms。解决：case 规模控制在窗口内（todo-cli 改快速流程），长任务拆分；运行时用 <code>--case-timeout-sec</code> 兜底。</p>
+    </div>
+  </dialog>
+<script>
+  document.querySelectorAll('[data-dialog]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var d = document.getElementById(b.dataset.dialog);
+      if (d && typeof d.showModal === 'function') d.showModal();
+    });
+  });
+  document.querySelectorAll('[data-close]').forEach(function (b) {
+    b.addEventListener('click', function () { var d = b.closest('dialog'); if (d) d.close(); });
+  });
+  document.querySelectorAll('dialog').forEach(function (d) {
+    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { document.querySelectorAll('dialog[open]').forEach(function (d) { d.close(); }); }
+  });
+</script>
+</body>
+</html>

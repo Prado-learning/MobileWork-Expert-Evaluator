@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+
+# 评测产物（本地生成，不入库）
+.eval-results/
+eval-runs/
+
+# 本地配置与密钥
+.env
+*.local
+
+# 测试报告生成物
+test-reports/
+
+# 运行时数据库与评测数据（本地生成，不入库）
+MobileEval/eval-data/
+eval-data/
+*.db
+*.db.bak*
+
+# 前端依赖与构建产物
+**/node_modules/
+**/dist/
+
+# 日志与临时文件
+*.log
+*.out
+_text_check.txt
+.workbuddy/
+
+# 备份文件与本机配置
+*.bak*
+.mobileeval-home.conf

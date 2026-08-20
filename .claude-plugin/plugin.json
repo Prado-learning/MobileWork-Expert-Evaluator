@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "promptfoo-expert-eval",
+  "displayName": "Promptfoo Expert Eval",
+  "version": "0.1.0",
+  "description": "通过 Promptfoo（opencode:sdk provider）对 OpenCode/MobileWork 专家与专家团（默认被测对象：software-team-lead 软件开发团队团长）进行真实运行评测：内置 case 库、支持自定义 case、生成可复现的 promptfoo 配置、执行 eval 并输出统一 JSON 证据。",
+  "author": {
+    "name": "Prado-learning"
+  },
+  "repository": "https://github.com/Prado-learning/MobileWork-Expert-Evaluator",
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "keywords": [
+    "promptfoo",
+    "opencode",
+    "evaluation",
+    "mobilework",
+    "expert-eval",
+    "agent-teams"
+  ]
+}

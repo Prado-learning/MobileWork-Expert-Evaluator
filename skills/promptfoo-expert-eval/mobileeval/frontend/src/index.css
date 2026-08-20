@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-page text-ink font-sans text-sm antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border border-hairline rounded-default p-4;
+  }
+  .btn {
+    @apply inline-flex items-center gap-1.5 rounded-default border border-hairline px-3 py-1.5 text-sm
+           text-ink bg-surface hover:bg-[#e8eaef] hover:border-[#d2d5da] active:bg-[#dfe2e8]
+           transition-colors cursor-pointer select-none;
+  }
+  .btn-primary {
+    @apply bg-accent text-white border-accent hover:bg-[#0f7ae0] active:bg-[#0c6ac4];
+  }
+  .btn-danger {
+    @apply text-danger border-danger/30 hover:bg-danger/10 active:bg-danger/15;
+  }
+  .input {
+    @apply w-full rounded-default border border-hairline bg-surface px-3 py-1.5 text-sm
+           focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent;
+  }
+  .label {
+    @apply block text-xs text-muted mb-1;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium border;
+  }
+  .badge-pass { @apply text-accent border-accent/30 bg-accent/5; }
+  .badge-fail { @apply text-danger border-danger/30 bg-danger/5; }
+  .badge-running { @apply text-warn border-warn/30 bg-warn/5; }
+  .badge-muted { @apply text-muted border-hairline bg-page; }
+  .badge-team { @apply text-accent border-accent/30 bg-accent/5; }
+  .badge-single { @apply text-[#7c5cff] border-[#7c5cff]/30 bg-[#7c5cff]/5; }
+  .table-base { @apply w-full text-sm; }
+  .table-base th { @apply text-left text-xs text-muted font-medium px-3 py-2 border-b border-hairline whitespace-nowrap; }
+  .table-base td { @apply px-3 py-2 border-b border-hairline align-top; }
+}

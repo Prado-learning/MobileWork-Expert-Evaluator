@@ -1,0 +1,44 @@
+{
+  "name": "mobilework-expert-eval-marketplace",
+  "owner": {
+    "name": "Prado-learning"
+  },
+  "description": "Promptfoo Expert Eval 评测插件（本仓库），并通过 GitHub source 引用公共 mobilework-expert-manager。两个插件需分别显式安装，互不依赖。",
+  "plugins": [
+    {
+      "name": "promptfoo-expert-eval",
+      "source": "./",
+      "description": "通过 Promptfoo opencode:sdk provider 对 OpenCode 专家（团）进行真实运行评测：内置 case 库、支持自定义 case、输出统一 JSON 证据。",
+      "author": {
+        "name": "Prado-learning"
+      },
+      "license": "Apache-2.0",
+      "keywords": [
+        "promptfoo",
+        "opencode",
+        "evaluation",
+        "expert-eval"
+      ]
+    },
+    {
+      "name": "mobilework-expert-manager",
+      "source": {
+        "source": "github",
+        "repo": "xiaodong528/mobilework-expert-manager"
+      },
+      "description": "设计、分析、创建、转换、修改、诊断、校验、安装、打包或版本发布 MobileWork 专家与专家团。",
+      "author": {
+        "name": "xiaodong528"
+      },
+      "homepage": "https://github.com/xiaodong528/mobilework-expert-manager",
+      "repository": "https://github.com/xiaodong528/mobilework-expert-manager",
+      "license": "Apache-2.0",
+      "keywords": [
+        "mobilework",
+        "opencode",
+        "experts",
+        "agent-teams"
+      ]
+    }
+  ]
+}
