@@ -48,11 +48,11 @@ def resolve_credentials():
         return {"api_key": anthropic_key, "base_url": base_url,
                 "model": os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")}
     if deepseek_key:
-        # DeepSeek 的 Anthropic 兼容端点：base_url/model 允许通过环境变量覆盖，
-        # 便于与网页 models 表配置打通（mobileeval_ctl start 时自动注入）。
+        # 优先使用注入的端点/模型（由 mobileeval_ctl 从数据库 models 表读取并注入），
+        # 默认走 DeepSeek 的 Anthropic 兼容端点 + deepseek-chat。
         return {"api_key": deepseek_key,
                 "base_url": os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic"),
-                "model": os.environ.get("DEEPSEEK_MODEL") or os.environ.get("ANTHROPIC_MODEL", "deepseek-chat")}
+                "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")}
     return None
 
 
@@ -182,14 +182,22 @@ def load_expert_context(workspace_dir, agent_name=None):
             ag["md_role"] = (fm.get("profession") or fm.get("description") or "")[:200]
             ag["md_workflow"] = body[:300]
     lead = next((a for a in agents if a["id"] == agent_name), agents[0] if agents else None)
+    members = [a for a in agents if a["id"] != (lead["id"] if lead else agent_name)]
+    is_team = bool(lead and members)
     parts = [f"被测对象：{agent_name}（工作区 {workspace_dir}）"]
-    if lead:
+    if is_team:
+        parts.append(f"类型：专家团（团长+{len(members)}团员）")
         parts.append(f"团长：{lead['id']} · {lead.get('md_role') or lead.get('description') or ''} · "
                      f"steps={lead.get('steps')} · 可委派: {','.join(lead.get('task_allow') or []) or '无'}")
-    for m in [a for a in agents if a["id"] != agent_name]:
-        parts.append(f"  - 团员 {m['id']} · {m.get('md_role') or m.get('description') or ''} · steps={m.get('steps')}")
+        for m in members:
+            parts.append(f"  - 团员 {m['id']} · {m.get('md_role') or m.get('description') or ''} · steps={m.get('steps')}")
+    elif lead:
+        parts.append("类型：单专家（独立完成，无委派/无团员）")
+        parts.append(f"专家：{lead['id']} · {lead.get('md_role') or lead.get('description') or ''} · "
+                     f"steps={lead.get('steps')} · "
+                     f"权限: bash={lead.get('bash')} edit={lead.get('edit')} webfetch={lead.get('webfetch')}")
     return {"agent_name": agent_name, "workspace_dir": workspace_dir,
-            "agents": agents, "summary": "\n".join(parts)}
+            "agents": agents, "is_team": is_team, "summary": "\n".join(parts)}
 
 
 # --------------------------------------------------------------------------- #
@@ -198,26 +206,36 @@ def load_expert_context(workspace_dir, agent_name=None):
 
 def analyze_expert(workspace_dir, agent_name, name="", description=""):
     ctx = load_expert_context(workspace_dir, agent_name)
+    is_team = ctx.get("is_team")
+    kind_label = "专家团" if is_team else "单专家"
+    rule_orchestrate = (
+        "3. 提示词要与该专家团的编排方式匹配：涉及团长的 case 提示词应要求委派对应团员"
+        "（如 PRD→产品经理、实现→工程师、测试→QA），并让团长验收汇总；\n"
+        if is_team else
+        "3. 这是单专家：提示词应要求该专家独立完成任务全流程，不得假设存在可委派的团员或团长验收环节；\n")
+    rule_analyze = (
+        "1. 先分析被测对象：团长与团员的角色、可委派关系、权限（bash/edit/webfetch）、steps 与工作流；\n"
+        if is_team else
+        "1. 先分析被测对象：该单专家的角色定位、权限（bash/edit/webfetch）、steps 与工作流，围绕其独立能力设计；\n")
     prompt = (
-        "你是评测方案设计师。请根据【被测专家（团）定义】与【任务名称/描述】设计一份完整的专家评测配置。\n"
-        "被测专家（团）定义是主要依据（决定场景类型/自主度/提示词/断言/业务指标如何匹配其实际能力），"
+        f"你是评测方案设计师。请根据【被测{kind_label}定义】与【任务名称/描述】设计一份完整的专家评测配置。\n"
+        f"被测{kind_label}定义是主要依据（决定场景类型/自主度/提示词/断言/业务指标如何匹配其实际能力），"
         "任务描述仅作辅助参考。\n\n"
-        f"【被测专家（团）定义】\n{ctx['summary']}\n\n"
+        f"【被测{kind_label}定义】\n{ctx['summary']}\n\n"
         f"【任务名称】{name}\n【任务描述】{description}\n\n"
         "只输出一个 JSON 对象（不要代码块标记、不要解释），格式：\n"
         '{"scenario_type": "structured|hybrid|open_ended", '
         '"autonomy_level": "low|high", '
-        '"prompt_template": "发给被测专家/专家团的固定提示词（支持 {output_dir} 占位，指明产物目录与最终输出要求）", '
+        '"prompt_template": "发给被测专家的固定提示词（支持 {output_dir} 占位，指明产物目录与最终输出要求）", '
         '"assertions": [{"type": "contains|regex|javascript", "value": "..."}], '
         '"human_metrics": [{"name": "业务指标名", "criteria": "1-5分", "weight": 0.6}], '
-        '"analysis": "设计说明：面向无开发经验用户解释为什么这样配置，说明如何匹配该专家（团）的角色/技能/权限/工作流"}\n'
+        '"analysis": "设计说明：面向无开发经验用户解释为什么这样配置，说明如何匹配该专家的角色/技能/权限/工作流"}\n'
         "规则：\n"
-        "1. 先分析被测对象：团长与团员的角色、可委派关系、权限（bash/edit/webfetch）、steps 与工作流；\n"
+        f"{rule_analyze}"
         "2. 精确度要求高、自主度要求低的任务 → structured + low + 确定性断言；"
         "只给目标与验收标准的开放任务 → open_ended + high，assertions 可留空；"
         "兼顾硬约束与专业判断 → hybrid；\n"
-        "3. 提示词要与该专家团的编排方式匹配：涉及团长的 case 提示词应要求委派对应团员"
-        "（如 PRD→产品经理、实现→工程师、测试→QA），并让团长验收汇总；\n"
+        f"{rule_orchestrate}"
         "4. assertions 用 promptfoo 语法：contains/regex 作用于最终输出文本；"
         "javascript 可用 import('node:fs') 验证产物文件（value 支持 {output_dir_abs} 占位）；\n"
         "5. human_metrics 是业务/用户可感知指标（如交付可用性、说明清晰度），2-4 个，权重和约等于 1；\n"
@@ -264,20 +282,23 @@ def generate_case_plan(workspace_dir, agent_name, task, count=6):
     """
     count = max(1, min(count, 12))
     ctx = load_expert_context(workspace_dir, agent_name)
-    task_name = task.get("name", "")
-    task_desc = task.get("description", "")
+    is_team = ctx.get("is_team")
+    kind_label = "专家团" if is_team else "单专家"
+    rule_scope = (
+        "聚焦 1 个明确功能/Bug/文档，委派不超过 2 个团员。"
+        if is_team else
+        "聚焦 1 个明确功能点或能力点，由该单专家独立完成。")
     prompt = (
-        "你是评测方案设计师。请基于【被测专家（团）定义】与【任务信息】，先输出评测 case 概要"
+        f"你是评测方案设计师。请基于【被测{kind_label}定义】与【任务信息】，先输出评测 case 概要"
         "（这一步只做方案设计，供用户确认，不要展开完整 case）。\n\n"
-        f"【被测专家（团）定义】\n{ctx['summary']}\n\n"
+        f"【被测{kind_label}定义】\n{ctx['summary']}\n\n"
         f"【任务名称】{task_name}\n【任务描述】{task_desc}\n\n"
         f"设计 {count} 个评测 case 的概要，覆盖：结构化（精确产出+确定性断言）、混合式（硬约束+专业判断）、"
         "开放式（高自主，只给目标与验收标准）三类（若任务性质明确可侧重某类）。\n"
         "整体输出 JSON 数组（不要代码块标记），格式：\n"
         '[{"title": "case 标题", "type": "structured|hybrid|open_ended", '
         '"target": "评测目标（一句话）", "verify": "验证点（2-3 个要点，分号分隔）"}]\n'
-        "规则：case 之间要有区分度（不同侧重），避免重复；单 case 须能在 5 分钟内完成，"
-        "聚焦 1 个明确功能/Bug/文档，委派不超过 2 个团员。"
+        f"规则：case 之间要有区分度（不同侧重），避免重复；单 case 须能在 5 分钟内完成，{rule_scope}"
     )
     raw = _call([{"role": "user", "content": prompt}], max_tokens=4000)
     data = _parse_json(raw)
@@ -313,6 +334,33 @@ def generate_cases(workspace_dir, agent_name, task, count=6, plan=None):
 def _case_batch(ctx, task, count, prefix="", plan=None):
     task_name = task.get("name", "")
     task_desc = task.get("description", "")
+    is_team = ctx.get("is_team")
+    kind_label = "专家团" if is_team else "单专家"
+    # 按被测对象类型分叉：编排方式 / 断言白名单 / 规则措辞
+    if is_team:
+        assert_enum = "contains|regex|javascript|tool-call|delegation|kb-hit"
+        allowed = ("contains", "regex", "javascript", "python",
+                   "tool-call", "delegation", "kb-hit", "llm-rubric")
+        rule_prompt_match = "1. 每个 case 的 prompt 要匹配该专家团的编排方式（委派对应团员、团长验收）；\n"
+        rule_prompt_hint = "涉及团长的 case 应要求委派对应团员并由团长验收汇总；不要询问用户"
+        rule_scope = "聚焦 1 个明确功能/Bug/文档，委派不超过 2 个团员，避免完整多阶段流程。"
+        rule_module = (
+            "   delegation=断言团长委派给某团员（value=团员 agent 名，仅 team 有效）；\n"
+            "   kb-hit=断言检索命中某关键词（value=关键词）。涉及协同/委派的 case 应给 delegation 断言。\n")
+        rule_cover = (
+            "    - 多模态解析：要求专家团解析表格/文档/数据（markdown 表格、CSV、JSON 等）并准确问答，断言解析结果正确；\n"
+            "    - 技能生成：要求专家团根据业务知识用自然语言生成一个可运行技能/工作流（输出技能定义文档），\n")
+    else:
+        assert_enum = "contains|regex|javascript|tool-call|kb-hit"
+        allowed = ("contains", "regex", "javascript", "python",
+                   "tool-call", "kb-hit", "llm-rubric")
+        rule_prompt_match = "1. 每个 case 的 prompt 要匹配该单专家独立完成任务的方式（不要求委派、不假设存在团员/团长）；\n"
+        rule_prompt_hint = "要求该专家独立完成任务全流程；不要询问用户"
+        rule_scope = "聚焦 1 个明确功能点或能力点，由该单专家独立完成，避免完整多阶段流程。"
+        rule_module = "   kb-hit=断言检索命中某关键词（value=关键词）。\n"
+        rule_cover = (
+            "    - 多模态解析：要求该专家解析表格/文档/数据（markdown 表格、CSV、JSON 等）并准确问答，断言解析结果正确；\n"
+            "    - 技能生成：要求该专家根据业务知识用自然语言生成一个可运行技能/工作流（输出技能定义文档），\n")
     plan_block = ""
     if plan:
         lines = []
@@ -324,8 +372,8 @@ def _case_batch(ctx, task, count, prefix="", plan=None):
             f"\n\n【用户已确认的 case 概要（必须严格按此展开，一个概要对应一个 case，标题/类型沿用）】\n"
             + "\n".join(lines))
     prompt = (
-        "你是评测方案设计师。请基于【被测专家（团）定义】与【任务信息】，为该专家系统自动生成一组评测 case。\n\n"
-        f"【被测专家（团）定义】\n{ctx['summary']}\n\n"
+        f"你是评测方案设计师。请基于【被测{kind_label}定义】与【任务信息】，为该专家系统自动生成一组评测 case。\n\n"
+        f"【被测{kind_label}定义】\n{ctx['summary']}\n\n"
         f"【任务名称】{task_name}\n【任务描述】{task_desc}\n\n"
         f"{plan_block}\n\n"
         f"要求生成 {count} 个 case，覆盖：结构化（精确产出+确定性断言）、混合式（硬约束+专业判断）、"
@@ -333,12 +381,11 @@ def _case_batch(ctx, task, count, prefix="", plan=None):
         "每个 case 是一个对象，整体输出 JSON 数组（不要代码块标记），格式：\n"
         '[{"case_id": "c1", "title": "case 标题", "type": "structured|hybrid|open_ended", '
         '"dimension": "tool_accuracy|kb_match|collaboration|output_quality", '
-        '"prompt": "发给被测专家/专家团的完整任务文本（支持 {output_dir} 占位，指明产物目录；'
-        '涉及团长的 case 应要求委派对应团员并由团长验收汇总；不要询问用户）", '
+        f'"prompt": "发给被测专家的完整任务文本（支持 {{output_dir}} 占位，指明产物目录；{rule_prompt_hint}）", '
         '"output_dir": "eval-runs/{run_id}/c1", '
-        '"assertions": [{"type": "contains|regex|javascript|tool-call|delegation|kb-hit", "value": "..."}]}]\n'
+        f'"assertions": [{{"type": "{assert_enum}", "value": "..."}}]}}]\n'
         "规则：\n"
-        "1. 每个 case 的 prompt 要匹配该专家团的编排方式（委派对应团员、团长验收）；\n"
+        f"{rule_prompt_match}"
         "2. 结构化 case 必须给确定性断言；开放式 case 的 assertions 可留空（靠人工评审）；\n"
         "3. assertions 用 promptfoo 语法：contains/regex 作用于最终输出文本（regex 严禁 (?i) 前缀）；\n"
         "   javascript 断言禁止 require，必须用固定模板：\n"
@@ -349,17 +396,15 @@ def _case_batch(ctx, task, count, prefix="", plan=None):
         "5. output_dir 使用 eval-runs/{run_id}/<case_id> 占位格式；\n"
         "6. 严禁在 prompt 中写入任何具体文件路径/绝对路径，产物位置一律用 {output_dir} 占位；\n"
         "7. 任务规模可控：单 case 的 agent 运行须能在 5 分钟内完成（opencode 运行窗口限制），\n"
-        "   聚焦 1 个明确功能/Bug/文档，委派不超过 2 个团员，避免完整多阶段流程。\n"
+        f"   {rule_scope}\n"
         "8. dimension 标记该 case 观测的模块维度；模块级断言（观测过程而非最终输出）：\n"
         "   tool-call=断言某工具被调用（value=工具名，或 {\"tool\":\"名\",\"status\":\"completed\"}）；\n"
-        "   delegation=断言团长委派给某团员（value=团员 agent 名，仅 team 有效）；\n"
-        "   kb-hit=断言检索命中某关键词（value=关键词）。涉及协同/委派的 case 应给 delegation 断言。\n"
+        f"{rule_module}"
         "9. 业务视角断言（用户可感知体验，区别于技术断言）：llm-rubric=用 LLM 裁判对最终输出\n"
         "   按标准打分，格式 {\"type\":\"llm-rubric\",\"metric\":\"可用性|相关性|完整性|可交付\",\"value\":\"评分标准描述\"}；\n"
         "   open_ended/hybrid case 应给 1-2 条 llm-rubric 业务断言，覆盖可用性与可交付性。\n"
         "10. 评测方向覆盖（按任务性质至少覆盖其一）：\n"
-        "    - 多模态解析：要求专家团解析表格/文档/数据（markdown 表格、CSV、JSON 等）并准确问答，断言解析结果正确；\n"
-        "    - 技能生成：要求专家团根据业务知识用自然语言生成一个可运行技能/工作流（输出技能定义文档），\n"
+        f"{rule_cover}"
         "      断言产物结构合规、可解析、含触发条件与执行步骤（验证\"业务人员自然语言转技能\"可行性）。\n"
         "11. 【交付文件名机制·最重要】每个 case 的 prompt 必须明确列出\"交付文件清单\"——\n"
         "    在【交付要求】中用 `{output_dir}/<确切文件名>` 指明每个产物文件（如 `{output_dir}/BUGFIX-REPORT.md`、\n"
@@ -381,8 +426,6 @@ def _case_batch(ctx, task, count, prefix="", plan=None):
         assertions = c.get("assertions") or []
         if not isinstance(assertions, list):
             assertions = []
-        allowed = ("contains", "regex", "javascript", "python",
-                   "tool-call", "delegation", "kb-hit", "llm-rubric")
         assertions = [a for a in assertions if isinstance(a, dict)
                       and a.get("type") in allowed and a.get("value")]
         ctype = c.get("type") if c.get("type") in ("structured", "hybrid", "open_ended") else "hybrid"
@@ -420,12 +463,17 @@ def suggest(summary, review=None, run_meta=None):
             lines = [f"- case {cr.get('case_id')}: verdict={cr.get('verdict')} 备注={cr.get('comments')}"
                      for cr in case_reviews if cr.get('case_id')]
             review_text += "\n逐 case 人工纠错：\n" + "\n".join(lines)
+    kind = (meta.get("kind") or "").lower()
+    focus_rule = (
+        "4. 针对专家团关注委派与协同\n\n"
+        if kind == "team" else
+        "4. 针对单专家关注任务独立完成度、输出规范与稳定性\n\n")
     prompt = (
         "请基于以下评测结果生成结构化的专家（团）优化建议，要求：\n"
         "1. 先总结评测结论（1-2 句）\n"
         "2. 按优先级列出 3-5 条可执行优化建议，每条注明依据的证据（case/断言/评审）\n"
         "3. 区分：专家自身问题 / 评测配置问题 / 环境波动\n"
-        "4. 针对专家团关注委派与协同\n\n"
+        f"{focus_rule}"
         f"【评测对象】{meta.get('object', '?')}\n"
         f"【状态】{meta.get('status', '?')} score={meta.get('score', '?')} "
         f"pass/fail/error={meta.get('pass_fail_error', '?')}\n"

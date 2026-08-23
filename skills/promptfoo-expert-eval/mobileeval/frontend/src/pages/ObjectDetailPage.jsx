@@ -122,7 +122,7 @@ export default function ObjectDetailPage() {
       {error && <div className="card !border-danger/40 text-danger mb-4">{error}</div>}
 
       <div className="card mb-4 grid md:grid-cols-4 gap-3 text-sm">
-        <div><div className="label">agent（团长）</div><code>{obj.agent_name}</code></div>
+        <div><div className="label">{obj.kind === 'team' ? 'agent（团长）' : 'agent'}</div><code>{obj.agent_name}</code></div>
         <div>
           <div className="label">评测模型</div>
           <Link to="/models" className="text-accent text-xs">
@@ -133,12 +133,12 @@ export default function ObjectDetailPage() {
         <div><div className="label">工作区</div><code className="text-xs break-all">{obj.workspace_dir || '默认 test01-eval'}</code></div>
       </div>
 
-      {/* 专家团信息：可折叠卡片，点标题整行展开/收起；成员项点名称行展开详情 */}
+      {/* 专家（团）信息：可折叠卡片，点标题整行展开/收起；成员项点名称行展开详情 */}
       <div className="card mb-4">
         <div className="flex items-center gap-2 cursor-pointer select-none" onClick={() => setTeamOpen(!teamOpen)}>
           <Users size={15} className="text-muted shrink-0" />
           <h3 className="font-semibold flex-1">
-            专家团信息
+            {obj.kind === 'team' ? '专家团信息' : '专家信息'}
             {agents?.agents?.length ? <span className="text-xs text-muted font-normal">（{agents.agents.length} 名成员）</span> : null}
           </h3>
           <ChevronDown size={15} className={`text-muted transition-transform ${teamOpen ? '' : '-rotate-90'}`} />
@@ -220,7 +220,7 @@ export default function ObjectDetailPage() {
                     <input type="checkbox" checked={selected.includes(r.id)}
                       onChange={(e) => setSelected(e.target.checked ? [...selected, r.id] : selected.filter(x => x !== r.id))} />
                     #{r.id} {r.score != null ? r.score.toFixed(2) : r.status}
-                    <span className="text-muted">{r.version}·{r.agent_on === 0 ? '无专家' : '专家团'}</span>
+                    <span className="text-muted">{r.version}·{r.agent_on === 0 ? '无专家' : (obj.kind === 'team' ? '专家团' : '专家')}</span>
                   </label>
                 ))}
               </div>
@@ -236,7 +236,7 @@ export default function ObjectDetailPage() {
           <div className="overflow-x-auto">
             <table className="table-base min-w-[960px]">
               <thead>
-                <tr><th>#</th><th>状态</th><th>分数</th><th>进度 / 通过·失败</th><th>版本</th><th>模型</th><th>专家团</th><th>次数</th><th>耗时</th><th>时间</th><th className="sticky right-0 bg-surface z-10 border-l border-hairline">操作</th></tr>
+                <tr><th>#</th><th>状态</th><th>分数</th><th>进度 / 通过·失败</th><th>版本</th><th>模型</th><th>{obj.kind === 'team' ? '专家团' : '专家'}</th><th>次数</th><th>耗时</th><th>时间</th><th className="sticky right-0 bg-surface z-10 border-l border-hairline">操作</th></tr>
               </thead>
               <tbody>
                 {runs.map(r => {
@@ -254,7 +254,7 @@ export default function ObjectDetailPage() {
                       </td>
                       <td className="text-xs">{r.version || '—'}</td>
                       <td className="text-xs">{r.model_name || r.model || '—'}</td>
-                      <td className="text-xs">{r.agent_on === 0 ? <span className="text-warn">无专家</span> : '专家团'}</td>
+                      <td className="text-xs">{r.agent_on === 0 ? <span className="text-warn">无专家</span> : (obj.kind === 'team' ? '专家团' : '专家')}</td>
                       <td className="text-xs">{r.repeat || 1}</td>
                       <td>{fmtMs(r.duration_ms)}</td>
                       <td className="text-xs text-muted">{fmtTime(r.created_at)}</td>
@@ -328,7 +328,9 @@ export default function ObjectDetailPage() {
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={runForm.agent_on === 1}
               onChange={(e) => setRunForm({ ...runForm, agent_on: e.target.checked ? 1 : 0 })} />
-            启用专家/专家团（取消 = 无专家 baseline，用通用 agent 跑同组 case，量化专家介入价值）
+            {obj.kind === 'team'
+              ? '启用专家团（取消 = 无专家 baseline，用通用 agent 跑同组 case，量化专家介入价值）'
+              : '启用专家（取消 = 无专家 baseline，用通用 agent 跑同组 case，量化专家介入价值）'}
           </label>
         </div>
         <div className="flex justify-end gap-2 mt-4">
