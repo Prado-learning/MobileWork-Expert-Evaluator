@@ -48,8 +48,11 @@ def resolve_credentials():
         return {"api_key": anthropic_key, "base_url": base_url,
                 "model": os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")}
     if deepseek_key:
-        return {"api_key": deepseek_key, "base_url": "https://api.deepseek.com/anthropic",
-                "model": os.environ.get("ANTHROPIC_MODEL", "deepseek-chat")}
+        # DeepSeek 的 Anthropic 兼容端点：base_url/model 允许通过环境变量覆盖，
+        # 便于与网页 models 表配置打通（mobileeval_ctl start 时自动注入）。
+        return {"api_key": deepseek_key,
+                "base_url": os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic"),
+                "model": os.environ.get("DEEPSEEK_MODEL") or os.environ.get("ANTHROPIC_MODEL", "deepseek-chat")}
     return None
 
 
