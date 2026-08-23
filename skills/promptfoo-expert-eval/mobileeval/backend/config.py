@@ -10,12 +10,53 @@ RUNS_DIR = os.path.join(DATA_DIR, "runs")
 DB_PATH = os.environ.get("MOBILEEVAL_DB", os.path.join(DATA_DIR, "mobileeval.db"))
 
 # 评测插件（mobilework-expert-eval-plugin）路径：
-# 优先项目内 vendor（Windows junction 链接，单一来源不复制）；缺失时回退上级目录
-_VENDOR_PLUGIN = os.path.join(PROJECT_ROOT, "vendor", "mobilework-expert-eval-plugin")
-_FALLBACK_PLUGIN = os.path.normpath(os.path.join(PROJECT_ROOT, "..", "mobilework-expert-eval-plugin"))
-PLUGIN_DIR = _VENDOR_PLUGIN if os.path.isdir(_VENDOR_PLUGIN) else _FALLBACK_PLUGIN
-RUN_EVAL_PY = os.path.join(PLUGIN_DIR, "skills", "promptfoo-expert-eval", "scripts", "run_eval.py")
-EXPERT_TOOLS_PY = os.path.join(PLUGIN_DIR, "skills", "promptfoo-expert-eval", "scripts", "expert_tools.py")
+# 优先 MOBILEEVAL_PLUGIN 环境变量（由 mobileeval_ctl.py start 注入 skill 真实目录）；
+# 其次项目内 vendor（Windows junction 链接，单一来源不复制）；缺失时回退上级目录。
+# 兜底：当三者均不存在时，回退到"本 backend 同级"的 skill 目录结构
+# （workspace-local 部署时，skill 就在 .../skills/promptfoo-expert-eval/，
+#  而 backend 被 bootstrap 复制到 MobileEval/backend，故从启动目录向上找含 skills/ 的位置）。
+def _resolve_plugin_dir():
+    env = os.environ.get("MOBILEEVAL_PLUGIN")
+    if env and os.path.isdir(env):
+        return env
+    vendor = os.path.join(PROJECT_ROOT, "vendor", "mobilework-expert-eval-plugin")
+    if os.path.isdir(vendor):
+        return vendor
+    fallback = os.path.normpath(os.path.join(PROJECT_ROOT, "..", "mobilework-expert-eval-plugin"))
+    if os.path.isdir(fallback):
+        return fallback
+    # 兜底：从 BASE_DIR 向上探测含 skills/promptfoo-expert-eval/scripts/expert_tools.py 的目录
+    cur = BASE_DIR
+    for _ in range(6):
+        cand = os.path.join(cur, "skills", "promptfoo-expert-eval")
+        if os.path.isfile(os.path.join(cand, "scripts", "expert_tools.py")):
+            return cand
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return fallback  # 最终回退（路径可能无效，但保留原行为以便报错定位）
+
+
+PLUGIN_DIR = _resolve_plugin_dir()
+
+
+def _script_path(name):
+    """自适应定位插件脚本：兼容两种部署形态。
+
+    - 插件外层目录：PLUGIN_DIR/skills/promptfoo-expert-eval/scripts/<name>
+    - workspace-local skill 目录（MOBILEEVAL_PLUGIN 直接指向 skill 目录）：
+      PLUGIN_DIR/scripts/<name>
+    """
+    as_outer = os.path.join(PLUGIN_DIR, "skills", "promptfoo-expert-eval", "scripts", name)
+    if os.path.isfile(as_outer):
+        return as_outer
+    as_skill = os.path.join(PLUGIN_DIR, "scripts", name)
+    return as_skill
+
+
+RUN_EVAL_PY = _script_path("run_eval.py")
+EXPERT_TOOLS_PY = _script_path("expert_tools.py")
 
 # 默认评测工作区（权限已适配非交互；被测专家包只读）
 DEFAULT_WORKSPACE = os.path.normpath(os.path.join(

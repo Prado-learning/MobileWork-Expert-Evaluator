@@ -330,7 +330,10 @@ def _start_backend(port=PORT):
         raise RuntimeError(f"数据库初始化失败：{r.stderr[-300:]}")
     # 启动后端（独立进程，Windows 下不弹窗）。常驻模式：不绑定调用进程生命周期
     # （OpenWork 工具调用是独立 shell，命令返回 shell 即退，绑定会导致服务被误杀）。
-    env = dict(os.environ, MOBILEEVAL_PORT=str(port))
+    # 注入 MOBILEEVAL_PLUGIN：指向本 skill 真实目录，使后端能定位 expert_tools.py/run_eval.py
+    # （workspace-local 部署时，bootstrap 把 mobileeval/ 复制到用户目录，原有 vendor/fallback 路径失效）。
+    plugin_dir = os.path.normpath(os.path.join(SCRIPT_DIR, ".."))
+    env = dict(os.environ, MOBILEEVAL_PORT=str(port), MOBILEEVAL_PLUGIN=plugin_dir)
     kwargs = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
