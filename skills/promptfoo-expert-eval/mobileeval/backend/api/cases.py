@@ -2,7 +2,7 @@
 from flask import Blueprint, jsonify, request
 
 import plugin_cli
-from db import get_db, jloads, jdumps, row_to_dict
+from db import get_db, jloads, jdumps, row_to_dict, ensure_default_task
 
 cases_bp = Blueprint("cases", __name__)
 
@@ -65,8 +65,14 @@ def generate_cases(object_id):
     if mode not in ("replace", "append"):
         mode = "replace"
     obj, task = _get_task_object(object_id, task_id)
-    if not obj or not task:
-        return jsonify({"error": "对象或任务不存在"}), 404
+    if not obj:
+        return jsonify({"error": "对象不存在"}), 404
+    # 去 task 层后，导入/分析流程不再创建 task；但生成 case 需要 task_id 落库。
+    # 若 object 下没有 task，自动确保一条默认 task（幂等），避免「对象或任务不存在」404。
+    resolved_task_id = task_id or (task["id"] if task else None)
+    if not resolved_task_id:
+        resolved_task_id = ensure_default_task(object_id)
+    task_id = resolved_task_id
     count = max(1, min(count, 12))
     try:
         # 统一走插件脚本（expert_tools.py generate-cases，直接落库），不重复实现 LLM 逻辑
