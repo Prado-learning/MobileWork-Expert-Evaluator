@@ -123,7 +123,7 @@ export default function ObjectDetailPage() {
       {tab === 'info' && (
         <>
           <div className="card mb-4 grid md:grid-cols-4 gap-3 text-sm">
-            <div><div className="label">团长</div><code>{obj.agent_name}</code></div>
+            <div><div className="label">{obj.kind === 'team' ? '团长' : '专家'}</div><code>{obj.agent_name}</code></div>
             <div>
               <div className="label">评测模型</div>
               <Link to="/models" className="text-accent text-xs">
@@ -330,7 +330,7 @@ export default function ObjectDetailPage() {
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={runForm.agent_on === 1}
               onChange={(e) => setRunForm({ ...runForm, agent_on: e.target.checked ? 1 : 0 })} />
-            启用专家/专家团
+            {obj.kind === 'team' ? '启用专家团' : '启用专家'}
           </label>
         </div>
         <div className="flex justify-end gap-2 mt-4">

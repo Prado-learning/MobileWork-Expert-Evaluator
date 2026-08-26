@@ -340,6 +340,8 @@ def _migrate_detask(conn):
             status TEXT NOT NULL DEFAULT 'pending',
             provider TEXT DEFAULT '',
             model TEXT DEFAULT '',
+            base_url TEXT DEFAULT '',
+            model_id INTEGER,
             experiment_id INTEGER,
             variant TEXT DEFAULT '',
             version TEXT DEFAULT '',
@@ -470,6 +472,37 @@ def _migrate_hierarchy(conn):
         conn.execute("ALTER TABLE tasks_new RENAME TO tasks")
     finally:
         conn.execute("PRAGMA foreign_keys = ON")
+
+
+def ensure_default_task(object_id):
+    """确保 object 至少拥有一条 task（去 task 层后，生成 case 需要 task_id 落库）。
+
+    若 object 下已存在 task，直接返回最近一条的 id；否则插入一条默认 task 并返回其 id。
+    用于修复「去 task 层迁移后导入/分析流程不再创建 task，但生成 case 接口仍要求 task 存在」的 bug。
+    """
+    conn = get_db()
+    try:
+        obj = row_to_dict(conn.execute(
+            "SELECT id, name, agent_name FROM objects WHERE id=?", (object_id,)).fetchone())
+        if not obj:
+            return None
+        existing = row_to_dict(conn.execute(
+            "SELECT id FROM tasks WHERE object_id=? ORDER BY id DESC LIMIT 1",
+            (object_id,)).fetchone())
+        if existing:
+            return existing["id"]
+        cur = conn.execute(
+            """INSERT INTO tasks (object_id, name, description, scenario_type, autonomy_level,
+               prompt_template, assertions, human_metrics)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (object_id,
+             f"{obj.get('name') or '专家'} 默认评测任务",
+             "覆盖核心能力的默认评测任务（由生成 case 时自动创建）",
+             "hybrid", "low", "", "[]", "[]"))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
 
 
 def jloads(s, default=None):

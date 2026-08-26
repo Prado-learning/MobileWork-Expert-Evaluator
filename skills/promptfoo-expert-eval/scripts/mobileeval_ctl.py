@@ -330,7 +330,38 @@ def _start_backend(port=PORT):
         raise RuntimeError(f"数据库初始化失败：{r.stderr[-300:]}")
     # 启动后端（独立进程，Windows 下不弹窗）。常驻模式：不绑定调用进程生命周期
     # （OpenWork 工具调用是独立 shell，命令返回 shell 即退，绑定会导致服务被误杀）。
-    env = dict(os.environ, MOBILEEVAL_PORT=str(port))
+    # 注入 MOBILEEVAL_PLUGIN：指向本 skill 真实目录，使后端能定位 expert_tools.py/run_eval.py
+    # （workspace-local 部署时，bootstrap 把 mobileeval/ 复制到用户目录，原有 vendor/fallback 路径失效）。
+    plugin_dir = os.path.normpath(os.path.join(SCRIPT_DIR, ".."))
+    env = dict(os.environ, MOBILEEVAL_PORT=str(port), MOBILEEVAL_PLUGIN=plugin_dir)
+    # 注入 AI 凭据：从数据库 models 表读取默认模型（用户在网页配置的 deepseek key），
+    # 供 expert_tools.py 的 AI 生成路径（分析/生成 case/建议）使用。
+    # 该路径走 Anthropic 兼容端点，DeepSeek 用 https://api.deepseek.com/anthropic + deepseek-chat。
+    try:
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT provider, model, base_url, api_key FROM models WHERE is_default=1 "
+                "OR id=(SELECT MIN(id) FROM models) ORDER BY is_default DESC LIMIT 1").fetchone()
+            if row and row["api_key"]:
+                if (row["provider"] or "deepseek").lower() == "deepseek":
+                    env["DEEPSEEK_API_KEY"] = row["api_key"]
+                    # 注意：DB 里的 base_url（如 https://api.deepseek.com）是 OpenAI 兼容端点，
+                    # 而 AI 生成路径走 Anthropic SDK，必须用 DeepSeek 的 Anthropic 兼容端点。
+                    env["DEEPSEEK_BASE_URL"] = "https://api.deepseek.com/anthropic"
+                    # DeepSeek Anthropic 兼容端点的标准模型名为 deepseek-chat/deepseek-reasoner
+                    env["DEEPSEEK_MODEL"] = row["model"] if row["model"] in (
+                        "deepseek-chat", "deepseek-reasoner") else "deepseek-chat"
+                else:
+                    env["ANTHROPIC_API_KEY"] = row["api_key"]
+                    if row["base_url"]:
+                        env["ANTHROPIC_BASE_URL"] = row["base_url"]
+                    if row["model"]:
+                        env["ANTHROPIC_MODEL"] = row["model"]
+        finally:
+            conn.close()
+    except Exception as _e:  # noqa: BLE001 读不到模型配置不阻断启动，仅跳过凭据注入
+        print(f"[warn] 未能从数据库读取模型凭据注入环境：{_e}", file=sys.stderr)
     kwargs = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
