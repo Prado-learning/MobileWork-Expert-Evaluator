@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, GitCompare } from 'lucide-react'
 import { api } from '../api'
 import { Empty, StatusBadge } from '../components/ui'
+import Markdown from '../components/Markdown'
 
 const SCORE_OK = (v) => v != null && v !== '' && v !== '—'
 
@@ -105,7 +106,7 @@ export default function ComparePage() {
           {suggestions.length > 0 && (
             <div className="card">
               <h3 className="font-semibold text-sm mb-2">优化依据（基线评测建议）</h3>
-              <div className="text-xs text-muted whitespace-pre-wrap">{suggestions[0].content}</div>
+              <div className="text-xs text-muted"><Markdown>{suggestions[0].content}</Markdown></div>
             </div>
           )}
         </>
