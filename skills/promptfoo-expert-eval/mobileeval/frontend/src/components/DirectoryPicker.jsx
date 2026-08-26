@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { FolderOpen } from 'lucide-react'
+import { FolderOpen, ArrowUp, X, Check } from 'lucide-react'
 import { api } from '../api'
 import { Modal, Spinner, Empty } from './ui'
 
@@ -10,7 +10,7 @@ export function WorkspaceDirInput({ value, onChange, placeholder }) {
     <div className="flex gap-2">
       <input className="input" value={value} onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder || '输入评测工作区路径，或点击「浏览」选择'} />
-      <button type="button" className="btn flex-none" onClick={() => setOpen(true)}>浏览…</button>
+      <button type="button" className="btn flex-none" onClick={() => setOpen(true)}><FolderOpen size={13} />浏览</button>
       {open && (
         <DirectoryPickerModal
           initial={value}
@@ -76,10 +76,10 @@ export function DirectoryPickerModal({ initial, onClose, onSelect }) {
       </div>
       <div className="text-xs text-muted mt-1">单击选中路径栏、双击进入目录</div>
       <div className="flex justify-between gap-2 mt-4">
-        <button className="btn" disabled={isRoot} onClick={() => parent && load(parent)}>↑ 上级目录</button>
+        <button className="btn" disabled={isRoot} onClick={() => parent && load(parent)}><ArrowUp size={13} />上级目录</button>
         <div className="flex gap-2">
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={() => onSelect(path)}>选择此目录</button>
+          <button className="btn" onClick={onClose}><X size={13} />取消</button>
+          <button className="btn btn-primary" onClick={() => onSelect(path)}><Check size={13} />选择此目录</button>
         </div>
       </div>
     </Modal>

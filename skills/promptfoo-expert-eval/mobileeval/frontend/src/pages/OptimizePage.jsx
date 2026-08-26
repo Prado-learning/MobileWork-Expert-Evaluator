@@ -54,7 +54,7 @@ export default function OptimizePage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <Link to={`/objects/${objectId}`} className="btn !px-2 !py-1 text-xs"><ArrowLeft size={13} /> 返回评测中心</Link>
+          <Link to={`/objects/${objectId}`} className="btn !px-2 text-xs"><ArrowLeft size={13} />返回评测中心</Link>
           <h2 className="font-semibold flex items-center gap-1.5"><Wand2 size={16} className="text-accent" /> 迭代优化</h2>
         </div>
         {obj && <div className="text-xs text-muted">{obj.name} · 当前 v{obj.current_version || 1}</div>}

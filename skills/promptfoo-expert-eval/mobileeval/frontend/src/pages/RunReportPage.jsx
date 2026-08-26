@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { Check, X, Star, MessageSquare } from 'lucide-react'
+import { Check, X, Star, MessageSquare, Trash2, Sparkles, ArrowLeft, Send } from 'lucide-react'
 import { api } from '../api'
 import { StatusBadge, KindBadge, Empty, Modal, Spinner, HelpButton, fmtTime, fmtMs } from '../components/ui'
 import Markdown from '../components/Markdown'
@@ -33,7 +33,7 @@ export default function RunReportPage() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
-        <Link to={`/objects/${run.object_id}`} className="btn !px-2">←</Link>
+        <Link to={`/objects/${run.object_id}`} className="btn !px-2.5" aria-label="返回"><ArrowLeft size={14} /></Link>
         <h1 className="text-xl font-semibold">{object_name} · 评测报告</h1>
         <StatusBadge status={run.status} />
         <a className="btn !py-1.5 text-xs ml-auto" href={`/api/runs/${runId}/export`} download title="下载 eval.log / results.json / 每 case 输出与过程 trace 的完整原始数据">
@@ -100,7 +100,7 @@ export default function RunReportPage() {
 
       <div className="grid md:grid-cols-3 gap-4 mb-4">
         <div className="card md:col-span-2">
-          <h3 className="font-semibold mb-2">逐 case 得分</h3>
+          <h3 className="font-semibold mb-2">逐用例得分</h3>
           {cases.length === 0 ? <Empty text="无 case" /> : (
             <ResponsiveContainer width="100%" height={140}>
               <BarChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
@@ -145,7 +145,7 @@ export default function RunReportPage() {
             <h3 className="font-semibold">人工评审</h3>
             <HelpButton onClick={() => setReviewHelp(true)} title="人工评审说明" />
           </div>
-          <button className="btn btn-primary" onClick={() => setShowReview(true)}>+ 提交评审</button>
+          <button className="btn btn-primary" onClick={() => setShowReview(true)}><MessageSquare size={13} />提交评审</button>
         </div>
         {reviews.length === 0 ? <Empty text="暂无人工评审" /> : (
           <div className="space-y-3">
@@ -159,7 +159,7 @@ export default function RunReportPage() {
                   </span>
                   <span className="text-xs text-muted">{fmtTime(r.created_at)}</span>
                   {r.ai_consumed ? <span className="badge badge-pass">AI 已读取</span> : <span className="badge badge-muted">待 AI 读取</span>}
-                  <button className="btn btn-danger !px-2 !py-0.5 text-xs ml-auto" onClick={async () => { await api.deleteReview(r.id); load() }}>删除</button>
+                  <button className="btn btn-danger !px-2 text-xs ml-auto" onClick={async () => { await api.deleteReview(r.id); load() }}><Trash2 size={12} />删除</button>
                 </div>
                 {r.comments && <div className="text-sm mt-2 whitespace-pre-wrap">{r.comments}</div>}
                 {r.metrics?.length > 0 && (
@@ -169,7 +169,7 @@ export default function RunReportPage() {
                 )}
                 <button className="btn text-xs mt-2" disabled={suggesting}
                   onClick={async () => { setSuggesting(true); try { await api.invokeTool('generate_suggestions', { run_id: Number(runId), review_id: r.id }); load() } catch (e) { alert(e.message) } finally { setSuggesting(false) } }}>
-                  {suggesting ? <Spinner /> : '基于此评审生成 AI 优化建议'}
+                  {suggesting ? <Spinner /> : <><Sparkles size={12} />生成优化建议</>}
                 </button>
               </div>
             ))}
@@ -182,7 +182,7 @@ export default function RunReportPage() {
           <h3 className="font-semibold">AI 优化建议（人工纠错 → AI 优化闭环）</h3>
           <button className="btn" disabled={suggesting}
             onClick={async () => { setSuggesting(true); try { await api.invokeTool('generate_suggestions', { run_id: Number(runId) }); load() } catch (e) { alert(e.message) } finally { setSuggesting(false) } }}>
-            {suggesting ? <Spinner /> : '自动生成建议'}
+            {suggesting ? <Spinner /> : <><Sparkles size={13} />自动生成建议</>}
           </button>
         </div>
         {suggestions.length === 0 ? <Empty text="暂无建议，点击生成" /> : (
@@ -209,7 +209,7 @@ export default function RunReportPage() {
           <p><b className="text-ink">闭环落点：</b>迭代优化页（/optimize）直接读取这些建议来重写专家（团）定义，因此人工意见会真正进入下一版专家，而非仅作展示。</p>
         </div>
         <div className="flex justify-end mt-4">
-          <button className="btn" onClick={() => setReviewHelp(false)}>知道了</button>
+          <button className="btn" onClick={() => setReviewHelp(false)}><Check size={13} />知道了</button>
         </div>
       </Modal>
     </div>
@@ -248,7 +248,7 @@ function SessionModal({ data, onClose }) {
           <div className="text-xs text-muted mt-2">该会话过程数据未落盘（opencode 会话持久化偶发失败，属工具链问题，非专家本身行为缺失）。</div>
         </div>
         <div className="flex justify-end mt-4">
-          <button className="btn" onClick={onClose}>关闭</button>
+          <button className="btn" onClick={onClose}><X size={13} />关闭</button>
         </div>
       </Modal>
     )
@@ -262,7 +262,7 @@ function SessionModal({ data, onClose }) {
       <div className="flex items-center gap-2 mb-3">
         <input className="input !py-1 !text-xs flex-1" value={q} onChange={(e) => setQ(e.target.value)}
           placeholder="搜索消息内容 / 工具名 / agent…" />
-        {query && <button className="btn !py-1 !px-2 text-xs" onClick={() => setQ('')}>清除</button>}
+        {query && <button className="btn !px-2 text-xs" onClick={() => setQ('')}><X size={12} />清除</button>}
       </div>
       <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
         {messages.length === 0 && <div className="text-center text-muted py-6">{query ? `没有匹配「${q}」的消息` : '会话无消息记录'}</div>}
@@ -301,7 +301,7 @@ function SessionModal({ data, onClose }) {
         })}
       </div>
       <div className="flex justify-end mt-4">
-        <button className="btn" onClick={onClose}>关闭</button>
+        <button className="btn" onClick={onClose}><X size={13} />关闭</button>
       </div>
     </Modal>
   )
@@ -341,7 +341,7 @@ function MetricGroup({ title, metrics, tone, explain }) {
             ))}
           </div>
           <div className="flex justify-end mt-4">
-            <button className="btn" onClick={() => setHelpOpen(false)}>关闭</button>
+            <button className="btn" onClick={() => setHelpOpen(false)}><X size={13} />关闭</button>
           </div>
         </Modal>
       )}
@@ -390,8 +390,8 @@ function CaseRow({ c }) {
             ) : (
               <span className="text-muted">{c.needs_review === 1 ? '待判定' : '未判定'}</span>
             )}
-            <button className="btn !py-1 text-xs" disabled={submitting} onClick={() => submitVerdict('pass')}>通过</button>
-            <button className="btn !py-1 text-xs" disabled={submitting} onClick={() => submitVerdict('fail')}>失败</button>
+            <button className="btn !px-2 text-xs" disabled={submitting} onClick={() => submitVerdict('pass')}><Check size={12} />通过</button>
+            <button className="btn !px-2 text-xs" disabled={submitting} onClick={() => submitVerdict('fail')}><X size={12} />失败</button>
             <input className="input !py-1 text-xs flex-1" placeholder="备注（可选，将反哺优化建议）" value={note} onChange={e => setNote(e.target.value)} />
           </div>
           {c.assertions?.length > 0 && (
@@ -515,8 +515,8 @@ function ReviewModal({ runId, objectId, onClose, onDone }) {
         </div>
       </div>
       <div className="flex justify-end gap-2 mt-4">
-        <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn btn-primary" disabled={busy || rating === 0} onClick={submit}>提交评审</button>
+        <button className="btn" onClick={onClose}><X size={13} />取消</button>
+        <button className="btn btn-primary" disabled={busy || rating === 0} onClick={submit}><Send size={13} />提交评审</button>
       </div>
     </Modal>
   )

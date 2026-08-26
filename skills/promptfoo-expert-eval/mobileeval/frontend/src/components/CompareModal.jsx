@@ -96,7 +96,7 @@ export default function CompareModal({ compare, onClose, open = true }) {
           <thead>
             <tr>
               <th className="w-8"></th>
-              <th>case</th>
+              <th>用例</th>
               {runs.map(r => <th key={r.id} className="text-center">#{r.id}</th>)}
             </tr>
           </thead>
@@ -125,14 +125,14 @@ export default function CompareModal({ compare, onClose, open = true }) {
                 })}
               </tr>
             ))}
-            {allCases.length === 0 && <tr><td colSpan={runs.length + 2} className="text-center text-muted py-6">暂无 case 数据</td></tr>}
+            {allCases.length === 0 && <tr><td colSpan={runs.length + 2} className="text-center text-muted py-6">暂无用例数据</td></tr>}
           </tbody>
         </table>
       </div>
 
-      {/* case 明细：各 run 的 score 与 error */}
+      {/* 用例明细：各 run 的 score 与 error */}
       <div>
-        <div className="font-semibold text-sm mb-2 flex items-center gap-2"><ArrowLeftRight size={14} className="text-accent" /> case 明细</div>
+        <div className="font-semibold text-sm mb-2 flex items-center gap-2"><ArrowLeftRight size={14} className="text-accent" /> 用例明细</div>
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {allCases.map(row => (
             <div key={row.case_id} className="border border-hairline rounded-default p-2.5 text-xs">
@@ -158,12 +158,12 @@ export default function CompareModal({ compare, onClose, open = true }) {
               </div>
             </div>
           ))}
-          {allCases.length === 0 && <div className="text-center text-muted py-4">无 case 数据</div>}
+          {allCases.length === 0 && <div className="text-center text-muted py-4">暂无用例数据</div>}
         </div>
       </div>
 
       <div className="flex justify-end mt-4">
-        <button className="btn" onClick={onClose}>关闭</button>
+        <button className="btn" onClick={onClose}><X size={13} />关闭</button>
       </div>
     </Modal>
   )
