@@ -168,6 +168,35 @@ python <scripts>/mobileeval_ctl.py open --page=object --object-id=9
 ```
 在 OpenWork 内置浏览器打开评测中心页，展示刚生成的 case 列表（含每条 title/type/status，可逐条查看与审核）。
 
+### 4d. 导入并转换用户提供的现成用例（重要：转换由 AI 完成）
+
+用户在评测中心页「评测用例」Tab 点「导入用例」→ 复制提示词模板 → 在对话框发送（填入自己用例文件的路径）。
+模板内容大致为：
+> 请读取本机文件 <文件路径> 中的评测用例，转换为评测中心标准用例格式，导入到当前专家/专家团的评测用例中（object_id=...）。转换结果先展示给我确认，确认后再写入。
+
+这些用例可能是任意格式（JSON/YAML/Markdown/Excel 等），**不一定符合评测中心标准结构**。
+转换由 **AI（本会话）** 完成，不调用额外 LLM：
+
+1. **拿到文件内容**：用户消息中给出文件路径 → 用 `read` 读取；若用户直接在对话框粘贴内容，直接用粘贴文本。
+2. **AI 转换**：识别原格式（JSON/YAML/Markdown/表格等），把每条用例转换为标准结构：
+   ```json
+   {"case_id": "imp-1", "title": "用例标题", "type": "structured|hybrid|open_ended",
+    "dimension": "", "prompt": "发给被测专家的完整任务指令（可含 {output_dir} 占位）",
+    "output_dir": "eval-runs/{run_id}/imp-1",
+    "assertions": [{"type": "contains|regex|javascript|tool-call|delegation|kb-hit|llm-rubric", "value": "..."}]}
+   ```
+   原内容已有标题/步骤/期望等 → 映射到 prompt（合成可执行指令）；无法确定的字段用默认（type=hybrid、assertions=[]）。
+   转换结果**先展示给用户确认**，确认后再落库。
+3. **落库**（转换好的 case 数组直接写入）：
+   ```bash
+   python <scripts>/expert_tools.py import-cases --object-id=9 --cases='[{"title":"...","prompt":"...",...}]' --mode=append --db-path=<db>
+   ```
+   落库为 `pending`，走「批量审核 case」流程（见下节）。
+
+> 注意：`import-cases` 只负责校验与落库，**不做格式转换**；转换必须是 AI 在会话中完成，
+> 因为输入格式千变万化，需要理解语义才能正确映射。
+> 前端「导入用例」只是给出提示词模板，**转换完全由 AI 在收到用户消息后执行**。
+
 ### 5. 批量审核 case
 ```bash
 python <scripts>/expert_tools.py review-cases --object-id=9 --action=approve --scope=all --db-path=<db>

@@ -33,11 +33,31 @@ export default function ObjectsPage() {
   const TEMPLATE_PROMPT = '请加载本插件捆绑的 mobilework-expert-manager 技能（skills/mobilework-expert-manager/SKILL.md），按其中协议帮我创建一个专家或专家团：\n\n<这里填写创建要求，例如：负责代码评审的专家团，包含 3 个成员>\n\n完成后告诉我产物路径，并询问我是否需要把它导入评测中心。'
 
   const copyTemplate = async () => {
+    const text = TEMPLATE_PROMPT
+    // 优先 Clipboard API；失败（如页面未聚焦）回退 execCommand（不依赖聚焦状态）
+    let ok = false
     try {
-      await navigator.clipboard.writeText(TEMPLATE_PROMPT)
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        ok = true
+      }
+    } catch { /* fallthrough */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        ok = document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch { ok = false }
+    }
+    if (ok) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch { /* 剪贴板不可用时静默 */ }
+    }
   }
   // 查询 / 筛选 / 分页
   const [query, setQuery] = useState('')

@@ -498,6 +498,42 @@ def save_cases(object_id, cases, db_path=None, task_id=None, mode="replace"):
         conn.close()
 
 
+def import_cases(object_id, cases, task_id=None, mode="append", db_path=None):
+    """把（agent 已转换好的）标准 case 列表写入评测库。
+
+    - 输入：cases 为已转换的标准 case 数组（title/type/prompt/output_dir/assertions）；
+    - 落库为 pending 状态，走人工审核。
+    转换由调用方（agent）完成，本命令只做校验与落库。
+    返回 {"imported": n, "cases": [...]}。
+    """
+    if not isinstance(cases, list) or not cases:
+        raise RuntimeError("cases 必须是非空数组（已转换的标准 case 列表）")
+    normalized = []
+    for i, c in enumerate(cases, 1):
+        if not isinstance(c, dict):
+            continue
+        title = (c.get("title") or "").strip() or f"导入用例 {i}"
+        ctype = (c.get("type") or "hybrid").strip().lower()
+        if ctype not in ("structured", "hybrid", "open_ended"):
+            ctype = "hybrid"
+        prompt = (c.get("prompt") or "").strip()
+        if not prompt:
+            continue
+        normalized.append({
+            "case_id": (c.get("case_id") or f"imp-{i}").strip(),
+            "title": title,
+            "type": ctype,
+            "dimension": (c.get("dimension") or "").strip(),
+            "prompt": prompt,
+            "output_dir": (c.get("output_dir") or f"eval-runs/{{run_id}}/imp-{i}").strip(),
+            "assertions": c.get("assertions") or [],
+        })
+    if not normalized:
+        raise RuntimeError("cases 中没有有效用例（缺少 title/prompt 或格式不正确）")
+    n, tid = save_cases(object_id, normalized, db_path=db_path, task_id=task_id, mode=mode)
+    return {"imported": n, "task_id": tid, "cases": normalized}
+
+
 def review_cases(object_id, action="approve", scope="all", case_ids=None, note="", db_path=None):
     """批量审核用例。action=approve|reject；scope=all|selected。返回 {updated, cases}。"""
     init_db(db_path)
@@ -1099,6 +1135,14 @@ def main(argv=None):
                       help="replace=覆盖未审核（默认）| append=直接追加")
     p_gc.add_argument("--db-path", default=None)
 
+    p_ic = sub.add_parser("import-cases", help="把已转换的标准 case 列表写入评测库（转换由调用方完成）")
+    p_ic.add_argument("--object-id", type=int, required=True, help="挂载对象")
+    p_ic.add_argument("--cases", default="", help="已转换的标准 case JSON 数组字符串")
+    p_ic.add_argument("--task-id", type=int, default=None)
+    p_ic.add_argument("--mode", default="append", choices=["append", "replace"],
+                      help="默认 append（不清除旧用例）；replace=覆盖未审核")
+    p_ic.add_argument("--db-path", default=None)
+
     p_gcp = sub.add_parser("generate-case-plan", help="生成评测 case 概要（供用户确认，不写库）")
     p_gcp.add_argument("--workspace", required=True)
     p_gcp.add_argument("--agent", default="software-team-lead")
@@ -1190,6 +1234,9 @@ def main(argv=None):
                    "hint": "用 open --page=object --object-id=<id> 打开页面查看 case"})
         else:
             _emit(cases)
+    elif args.cmd == "import-cases":
+        cases = json.loads(args.cases) if args.cases else []
+        _emit(import_cases(args.object_id, cases, args.task_id, args.mode, args.db_path))
     elif args.cmd == "generate-case-plan":
         plan = generate_case_plan(args.workspace, args.agent,
                                   {"name": args.name, "description": args.description}, args.count)

@@ -194,6 +194,17 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     blocks TEXT DEFAULT '[]',                        -- JSON: 有序内容块 [{type:'text'|'tool', ...}]（AI 消息，保存交替顺序）
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS pending_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    object_id INTEGER NOT NULL REFERENCES objects(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    saved_path TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',          -- pending=待转换 | converting=转换中 | done=已完成 | failed=失败
+    note TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    finished_at TEXT
+);
 """
 
 _INDEXES = """
@@ -202,6 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_runs_object ON runs(object_id);
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_cases_object ON cases(object_id);
 CREATE INDEX IF NOT EXISTS idx_case_results_run ON case_results(run_id);
+CREATE INDEX IF NOT EXISTS idx_pending_imports_object ON pending_imports(object_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_run ON reviews(run_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
 """

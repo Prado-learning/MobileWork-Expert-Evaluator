@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Brain, FileInput, Puzzle, CircleCheck, Lightbulb, X, Check, Trash2, Plus, Eye } from 'lucide-react'
+import { Brain, FileInput, Puzzle, CircleCheck, Lightbulb, X, Check, Trash2, Plus, Eye, Upload, Copy } from 'lucide-react'
 import { api } from '../api'
 import { Modal, Spinner, Empty } from './ui'
 
@@ -20,6 +20,46 @@ export default function CaseManager({ objectId, onCasesChange }) {
   const [confirmOpen, setConfirmOpen] = useState(false)   // 生成前确认弹窗（模式 + 数量）
   const [logicOpen, setLogicOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState('all')   // all | pending | approved
+  // AI 导入用例引导（与"创建专家/专家团"一致：给模板，用户复制到对话框填路径）
+  const [importOpen, setImportOpen] = useState(false)
+  const [importCopied, setImportCopied] = useState(false)
+  const [objectName, setObjectName] = useState('')
+
+  const importTemplate = `请读取本机中的用例文件，文件路径如下：
+
+<这里填写用例文件路径，如：/Users/xxx/测试用例.md>
+
+将它们转换为评测中心的标准用例格式，并导入到「${objectName || '当前专家/专家团'}」的评测用例中。
+
+转换结果先展示给我确认，确认后再写入。`
+
+  const copyImportTemplate = async () => {
+    const text = importTemplate
+    // 优先 Clipboard API；失败（如页面未聚焦）回退 execCommand（不依赖聚焦状态）
+    let ok = false
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        ok = true
+      }
+    } catch { /* fallthrough */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        ok = document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch { ok = false }
+    }
+    if (ok) {
+      setImportCopied(true)
+      setTimeout(() => setImportCopied(false), 2000)
+    }
+  }
 
   const load = async () => {
     try {
@@ -31,6 +71,11 @@ export default function CaseManager({ objectId, onCasesChange }) {
     finally { setLoading(false) }
   }
   React.useEffect(() => { setLoading(true); load() }, [objectId])
+
+  // 拉取当前对象名称（用于导入模板：替换"当前专家/专家团"）
+  React.useEffect(() => {
+    api.getObject(objectId).then((o) => setObjectName(o?.name || '')).catch(() => {})
+  }, [objectId])
 
   const generate = async () => {
     setConfirmOpen(false)
@@ -69,9 +114,30 @@ export default function CaseManager({ objectId, onCasesChange }) {
           <button className="btn btn-primary" disabled={generating} onClick={() => setConfirmOpen(true)}>
             {generating ? <Spinner light /> : <><Plus size={14} />生成用例</>}
           </button>
+          <button className="btn" onClick={() => setImportOpen(true)} title="上传现成的用例文件，AI 自动转换为评测用例">
+            <Upload size={14} />上传用例
+          </button>
         </div>
       </div>
       {error && <div className="text-danger text-xs mb-3">{error}</div>}
+
+      {/* 上传用例引导弹窗：给提示词模板，用户复制到对话框填文件路径 */}
+      <Modal open={importOpen} title="上传用例" onClose={() => setImportOpen(false)}>
+        <div className="grid gap-4 text-sm text-muted leading-relaxed">
+          <div>在对话框中发送下面的提示词，AI 会自动读取并转换为评测用例。</div>
+          <div className="relative card !p-3 pr-14 bg-page/60 text-xs font-mono leading-relaxed whitespace-pre-line">
+            <button type="button"
+              className={`absolute top-2 right-2 inline-flex items-center gap-1 text-xs rounded-default border px-2 py-0.5 transition-colors ${importCopied ? 'border-accent text-accent' : 'border-hairline text-muted hover:text-ink'}`}
+              onClick={copyImportTemplate}>
+              <Copy size={11} />{importCopied ? '已复制' : '复制'}
+            </button>
+            {importTemplate}
+          </div>
+        </div>
+        <div className="flex justify-end mt-4">
+          <button className="btn btn-primary" onClick={() => setImportOpen(false)}><Check size={13} />知道了</button>
+        </div>
+      </Modal>
 
       {/* 生成前确认弹窗 */}
       <Modal open={confirmOpen} title="生成用例" onClose={() => setConfirmOpen(false)}>
