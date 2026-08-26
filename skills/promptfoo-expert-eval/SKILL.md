@@ -47,15 +47,15 @@ npm --version
 ```
 
 - **Python 缺失或版本 < 3.10**：向用户说明"评测工具需要 Python 3.10+，当前未检测到（或版本过低），
-  需要下载安装，是否同意安装？"。**用户同意后**协助安装（按系统推荐）：
-  - Windows：`winget install Python.Python.3.12`（或引导用户从 python.org 下载安装包，勾选 Add to PATH）
-  - macOS：`brew install python@3.12`
-  - Linux：`sudo apt install python3 python3-pip`（或系统对应包管理器）
-  装完重新检测确认版本。
-- **Node.js / npm 缺失或版本 < 18**：同样先说明再征得同意，然后协助安装：
-  - Windows：`winget install OpenJS.NodeJS.LTS`（或引导从 nodejs.org 下载 LTS 安装包）
-  - macOS：`brew install node@22`
-  - Linux：`sudo apt install nodejs npm`（或 nvm）
+  需要下载安装"，并按「交互提问协议」给出选项：
+  ```
+  请选择：
+  [1] 同意安装（macOS: brew install python@3.12；Windows: winget install Python.Python.3.12；Linux: sudo apt install python3）
+  [2] 不安装，停止评测
+  ```
+  同时用 `composer.set_text` 预填 `1`。**用户同意后**协助安装（按系统推荐），装完重新检测确认版本。
+- **Node.js / npm 缺失或版本 < 18**：同样先说明再征得同意（选项同上，安装命令：
+  macOS `brew install node@22`；Windows `winget install OpenJS.NodeJS.LTS`；Linux `sudo apt install nodejs npm`），
   装完重新检测。
 - **用户不同意安装**：如实告知"缺少 Python/Node 无法运行评测工具"，停止并说明后续需要时可再装，不强行继续。
 
@@ -63,7 +63,12 @@ npm --version
 **评测模型（必配，唯一需要用户手动完成的事）**：执行 `mobileeval_ctl.py start` 后用
 `expert_tools.py list-models --db-path=<db>` 检查；**若没有任何模型 → 自动执行
 `mobileeval_ctl.py open --page=models` 打开「评测模型」配置页，提示用户添加模型（name/provider/model/base_url/api_key），
-等待用户配置完成后再继续后续评测流程**（发起评测、生成 case 前都确认模型已就绪）。
+等待用户配置完成后再继续后续评测流程**（发起评测、生成 case 前都确认模型已就绪）。等待时按协议给出收尾选项：
+```
+请选择：
+[1] 已配置完成，继续（agent 重新 list-models 校验）
+[2] 稍后再说（流程暂停）
+```
 
 ## 启动前置（每次调用本 skill 的第一件事，必须执行）
 
@@ -93,6 +98,31 @@ already_running 直接复用），不需要时不重复执行 start/status；停
 4. **打开页面失败**：一次打开失败（ERR_CONNECTION_REFUSED）时，先 `status` 确认再重试一次；不要反复重试。
 5. **及时汇报**：每完成一个大步骤（启动/确认对象/确认 case/评测完成）立即向用户汇报一句话进度，
    不要让用户长时间等待无反馈。
+
+### 交互提问协议（所有需要用户确认/选择的地方必须遵守）
+
+OpenWork 无"动态可点击按钮"原生能力，但有 `composer.set_text`（把预填文本放入输入框）。
+因此**所有向用户提问/确认的地方，一律用「编号选项」+ `composer.set_text` 预填**实现点选式体验：
+
+1. **选项格式**（消息中渲染）：
+   ```
+   请选择：
+   [1] 选项描述（对应操作说明）
+   [2] 选项描述
+   [3] 选项描述
+   ```
+2. **预填输入框**：提问的同时调用 `composer.set_text`，把"最可能的默认选择"对应的回复文本
+   预填进输入框（用户可见、可编辑、回车即发送）；若无法调用该能力，则在消息末尾附上
+   "回复数字即可，如：1"。
+3. **选项必须可执行**：每个选项要么是 `[数字]` 直接触发一条命令，要么是明确的下一步动作
+   （如"调整参数→重跑 dry-run"）；禁止开放式提问（如"你想怎么做？"）。
+4. **脚本 options 字段**：`overview` / `generate-case-plan` / `run-eval --dry-run` / `start`
+   返回 JSON 中带 `options` 数组（`[{"key": "1", "label": "…", "action": "命令或说明"}]`），
+   AI 必须按该数组渲染选项，不得自造选项。
+5. **默认选中**：`options` 中 `default: true` 的项即默认选择，`composer.set_text` 预填其 action。
+
+> 例外：评测模型配置（需用户填表单）与网页端操作（评测中心页内按钮）不走本协议，但
+> agent 等待时应给出"已配置完成/跳过"等收尾选项。
 
 ## 工具（AI 按需调用）
 
@@ -127,8 +157,8 @@ python <scripts>/expert_tools.py analyze-expert --workspace=<被测工作区> --
 # 阶段 4a：生成 case 概要（不写库，供用户确认）
 python <scripts>/expert_tools.py generate-case-plan --workspace=<被测工作区> --agent=software-team-lead \
   --name="评测方向名" --description="评测方向描述" --count=6
-# 返回 {"status":"awaiting_confirmation","plan":[{"seq","title","type","target","verify"},...]}
-# → 把 plan 展示给用户确认（标题/类型/目标/验证点），用户确认后才进行下一步
+# 返回 {"status":"awaiting_confirmation","plan":[{"seq","title","type","target","verify"},...], "options":[...]}
+# → 把 plan 展示给用户确认（标题/类型/目标/验证点），按 options 渲染选项并预填默认项，用户确认后才进行下一步
 
 # 阶段 4b：用户确认后，按概要生成完整 case 并写库（--plan 传上一步返回的 plan JSON 字符串）
 python <scripts>/expert_tools.py generate-cases --workspace=<被测工作区> --agent=software-team-lead \
@@ -180,25 +210,39 @@ meta.json 可由 AI 构造：`{"object": "对象名", "status": "passed|failed",
 0. **启动前置（必须）**：先执行 `mobileeval_ctl.py start` 并在 OpenWork 内置浏览器打开
    `http://127.0.0.1:7891`，让用户看到评测中心页面。随后执行 `expert_tools.py list-models --db-path=<db>`
    **检查评测模型**：没有任何模型 → **自动执行 `open --page=models` 打开「评测模型」配置页**，
-   提示用户添加模型并等待配置完成（未配模型前不进入后续步骤）。
+   提示用户添加模型并按协议给出收尾选项（[1] 已配置完成 [2] 稍后再说），等待配置完成
+   （未配模型前不进入后续步骤）。
 1. **确认对象（先看主库，不在就导入）**：
    - 执行 `expert_tools.py list-objects --db-path=<db>`，返回 `db`（**唯一权威库路径**，即 web 用的库）和对象列表。
    - 用户要评测的专家/专家团**在列表里** → 记下 object_id，执行 `overview --object-id=<id>` 拿全貌。
-   - **不在列表里** → **唯一动作是 `import-expert` 导入**（从 OpenWork 全局或 workspace 复制到隔离工作区并建对象），
-     导入后再 `list-objects` 确认、再 `overview`。
+   - **不在列表里** → **唯一动作是 `import-expert` 导入**（从 OpenWork 全局或 workspace 复制到隔离工作区并建对象）。
+     若存在多个候选来源，按协议给出选项（[1] 全局 ~/.config/opencode/agents [2] 指定 workspace 目录 [3] 取消）；
+     单一来源则直接导入。导入后再 `list-objects` 确认、再 `overview`。
    - **严禁**：自行搜索/猜测数据库文件、使用非 `list-objects` 返回的 `--db-path`、直接改库。
      所有命令的 `--db-path` 必须等于 `list-objects` 返回的 `db`（web 与脚本必须同一个库）。
 2. **生成 case（两阶段，仅当对象无 case 时）**：`analyze-expert` 分析专家团（业务指标自动落到对象）；然后
-   `generate-case-plan --count=6` 生成 case 概要，**展示给用户确认**
-   （标题/类型/目标/验证点）；用户确认后 `generate-cases --count=6 --plan=<概要JSON>` 按概要生成完整 case 写库。
+   `generate-case-plan --count=6` 生成 case 概要，**按 options 渲染并展示给用户确认**
+   （标题/类型/目标/验证点）：[1] 确认生成 [2] 调整数量/内容 [3] 重新生成概要；
+   用户确认后 `generate-cases --count=6 --plan=<概要JSON>` 按概要生成完整 case 写库。
 3. **打开展示页面**：`open --page=object --object-id=<id>`，让用户在评测中心页看到刚生成的 case 列表。
-4. **审核**：询问用户是否全部通过；通过则 `review-cases --scope=all`；用户想挑一部分则
-   `list-cases` 拿 id 后 `--scope=selected`。
+4. **审核**：按「交互提问协议」询问用户（`options` 来自 `overview` 的 `next_step`）：
+   ```
+   请选择：
+   [1] 全部通过（review-cases --scope=all）
+   [2] 只通过部分（agent list-cases 展示 id → 用户给 id → --scope=selected --case-ids=...）
+   [3] 驳回全部 / 重新生成 case
+   ```
 5. **发起评测（必须先确认参数）**：发起前**必须**执行
    `mobileeval_ctl.py run-eval --object-id=<id> --dry-run --db-path=<db>`
    拿到本次评测的完整参数（评测模型/专家版本/是否启用专家团/重复次数/并发/对照实验/variant/将跑的 case 数），
-   **逐项展示给用户确认**（参数与 web「发起评测」弹窗一致）；用户确认后才去掉 `--dry-run` 正式执行。
-   需要调整参数时，让用户指定后再 dry-run 一次。未确认前**不得**发起评测。
+   **按 `options` 渲染选项并逐项展示给用户确认**（参数与 web「发起评测」弹窗一致）：
+   ```
+   请选择：
+   [1] 确认发起（agent 去掉 --dry-run 正式执行，参数与预览一致）
+   [2] 修改参数（用户指定 → 重跑 dry-run）
+   [3] 取消
+   ```
+   同时用 `composer.set_text` 预填 `1`。用户确认后才正式执行。未确认前**不得**发起评测。
    无审核通过的 case 时评测会直接失败（提示先生成并审核用例）。
 6. **生成建议**：评测完成后 `suggest` 生成优化建议。
 7. **汇报 + 打开网页**：汇总结果（通过/失败/分数），并在 OpenWork 内置浏览器打开
@@ -246,6 +290,14 @@ python <scripts>/expert_tools.py import-expert --name=software-team-lead --sourc
 python <scripts>/expert_tools.py versions-list --object-id=<id> --db-path=<db>   # 版本历史
 python <scripts>/expert_tools.py optimize-expert --object-id=<id> --run-id=<run_id> [--note="说明"] [--only-agents=a,b] --db-path=<db>
 ```
+按「交互提问协议」确认后再执行 `optimize-expert`：
+```
+请选择：
+[1] 执行优化（agent 运行 optimize-expert，自动快照旧版 + AI 重写 + 写回全局）
+[2] 只生成建议，暂不优化
+[3] 跳过
+```
+同时用 `composer.set_text` 预填 `1`。
 `optimize-expert` 流程：读取该 run 的优化建议 → **自动快照当前版本**（保存旧版到
 `workspaces/<名>/versions/v<N>/`，滚动保留最近 10 版）→ AI 逐个 agent 基于建议重写定义
 （身份/角色不变，优化工作流/输出规范/验收标准/权限等）→ **直接写回 OpenWork 全局版本

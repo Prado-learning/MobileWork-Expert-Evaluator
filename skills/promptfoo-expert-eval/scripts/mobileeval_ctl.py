@@ -348,10 +348,20 @@ def cmd_start(args):
     # 服务为常驻模式（不绑定调用进程生命周期）：OpenWork 的工具调用是独立 shell，
     # 命令返回后 shell 即退出，绑定会导致服务被误杀。重复调用直接复用，无需重启。
     if is_running(PORT):
-        return {"status": "already_running", "url": f"http://127.0.0.1:{PORT}", "port": PORT}
+        return {"status": "already_running", "url": f"http://127.0.0.1:{PORT}", "port": PORT,
+                "options": _START_OPTIONS}
     _start_backend(PORT)
     return {"status": "started", "url": f"http://127.0.0.1:{PORT}", "port": PORT,
-            "note": "服务常驻运行；重复 start 会复用；用 stop 命令停止"}
+            "note": "服务常驻运行；重复 start 会复用；用 stop 命令停止",
+            "options": _START_OPTIONS}
+
+
+_START_OPTIONS = [
+    {"key": "1", "label": "打开评测中心页面", "action": "在 OpenWork 内置浏览器打开 http://127.0.0.1:7891",
+     "default": True},
+    {"key": "2", "label": "继续评测流程", "action": "list-models 检查模型 → list-objects 确认对象 → 生成/审核 case → run-eval"},
+    {"key": "3", "label": "停止服务", "action": "mobileeval_ctl.py stop"},
+]
 
 
 def cmd_stop(args):
@@ -621,8 +631,17 @@ def cmd_run_eval(args):
             raise RuntimeError(f"对象 {args.object_id} 不存在")
         p = _resolve_run_params(args, obj)
         if getattr(args, "dry_run", False):
-            return {"status": "preview", "hint": "以上为本次评测将使用的参数，用户确认后再执行 run-eval",
-                    "params": p}
+            return {"status": "preview",
+                    "hint": "以上为本次评测将使用的参数，用户确认后再执行 run-eval",
+                    "params": p,
+                    "options": [
+                        {"key": "1", "label": "确认发起评测",
+                         "action": "去掉 --dry-run 重新执行 run-eval（参数与本预览一致）",
+                         "default": True},
+                        {"key": "2", "label": "修改参数",
+                         "action": "用户指定 model-id/version/agent-on/repeat/concurrency/experiment 后重跑 dry-run"},
+                        {"key": "3", "label": "取消", "action": "本次不发起评测"},
+                    ]}
         concurrency = p["concurrency"]
         agent_on = p["agent_on"]
         version = p["version"]

@@ -604,17 +604,39 @@ def overview(object_id, db_path=None):
             (object_id,)).fetchall()]
         pending = sum(1 for c in cases if c["status"] == "pending")
         approved = sum(1 for c in cases if c["status"] == "approved")
+        if pending and not approved:
+            step = "review"
+            hint = (f"有 {pending} 条待审核 case：询问用户是否全部通过（review-cases --scope=all），"
+                    f"通过后 run-eval 发起评测")
+            options = [
+                {"key": "1", "label": "全部通过", "action": "review-cases --object-id=%d --action=approve --scope=all --db-path=<db>" % object_id, "default": True},
+                {"key": "2", "label": "只通过部分", "action": "list-cases --object-id=%d 展示 id 后 review-cases --scope=selected --case-ids=..." % object_id},
+                {"key": "3", "label": "驳回全部 / 重新生成", "action": "review-cases --action=reject --scope=all 后重新 generate-case-plan"},
+            ]
+        elif approved:
+            step = "ready"
+            hint = f"已有 {approved} 条通过 case，可直接 run-eval 发起评测"
+            options = [
+                {"key": "1", "label": "发起评测", "action": "mobileeval_ctl.py run-eval --object-id=%d --dry-run --db-path=<db>（先预览参数再确认）" % object_id, "default": True},
+                {"key": "2", "label": "再生成一批 case", "action": "generate-case-plan（mode=append 追加）"},
+                {"key": "3", "label": "查看/导出报告", "action": "mobileeval_ctl.py open --page=object --object-id=%d" % object_id},
+            ]
+        else:
+            step = "nocase"
+            hint = "没有 case：先 generate-case-plan 生成概要 → 用户确认 → generate-cases 写库"
+            options = [
+                {"key": "1", "label": "生成评测 case", "action": "generate-case-plan 生成概要 → 用户确认 → generate-cases 写库", "default": True},
+                {"key": "2", "label": "取消", "action": "流程结束"},
+            ]
         return {
             "object": {k: o.get(k) for k in ("id", "name", "kind", "agent_name",
                                               "model", "current_version")},
             "case_stats": {"total": len(cases), "pending": pending, "approved": approved},
             "cases": cases,
             "recent_runs": runs,
-            "next_step_hint": (
-                f"有 {pending} 条待审核 case：询问用户是否全部通过（review-cases --scope=all），"
-                f"通过后 run-eval 发起评测" if pending and not approved else
-                f"已有 {approved} 条通过 case，可直接 run-eval 发起评测" if approved else
-                "没有 case：先 generate-case-plan 生成概要 → 用户确认 → generate-cases 写库"),
+            "next_step": step,
+            "next_step_hint": hint,
+            "options": options,
         }
     finally:
         conn.close()
@@ -1157,7 +1179,18 @@ def main(argv=None):
         plan = generate_case_plan(args.workspace, args.agent,
                                   {"name": args.name, "description": args.description}, args.count)
         _emit({"status": "awaiting_confirmation", "plan": plan,
-               "hint": "把概要展示给用户确认；确认后把 plan JSON 作为 --plan 传给 generate-cases"})
+               "options": [
+                   {"key": "1", "label": "确认，按此概要生成完整 case",
+                    "action": "generate-cases --count=%d --plan=<plan JSON> --object-id=<id> --db-path=<db>" % args.count,
+                    "default": True},
+                   {"key": "2", "label": "调整数量或内容",
+                    "action": "用户指定 count/标题/类型/验证点后重跑 generate-case-plan"},
+                   {"key": "3", "label": "重新生成概要",
+                    "action": "重新执行 generate-case-plan（可换描述/数量）"},
+                   {"key": "4", "label": "取消",
+                    "action": "流程结束，不生成 case"},
+               ],
+               "hint": "把 plan 展示给用户确认并按 options 渲染；确认后把 plan JSON 作为 --plan 传给 generate-cases"})
     elif args.cmd == "review-cases":
         case_ids = [int(x) for x in args.case_ids.split(",") if x.strip()]
         _emit(review_cases(args.object_id, args.action, args.scope, case_ids, args.note, args.db_path))
