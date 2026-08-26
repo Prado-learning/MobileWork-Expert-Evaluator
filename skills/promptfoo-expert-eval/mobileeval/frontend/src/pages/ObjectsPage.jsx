@@ -22,6 +22,8 @@ export default function ObjectsPage() {
   const [dirFiles, setDirFiles] = useState(null)
   const [uploading, setUploading] = useState(false)
   const dirInputRef = useRef(null)
+  // 创建专家/专家团 引导提示
+  const [showCreateGuide, setShowCreateGuide] = useState(false)
 
   const load = async () => {
     try { setObjects(await api.listObjects()); setError('') }
@@ -87,7 +89,10 @@ export default function ObjectsPage() {
           <h1 className="text-xl font-semibold">专家 / 专家团</h1>
           <p className="text-muted text-xs mt-0.5">顶层对象；每个专家团下挂多个评测任务，任务下是多次评测记录</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowNew(true)}>+ 添加专家/专家团</button>
+        <div className="flex items-center gap-2">
+          <button className="btn" onClick={() => setShowCreateGuide(true)}>创建专家/专家团</button>
+          <button className="btn btn-primary" onClick={() => setShowNew(true)}>+ 添加专家/专家团</button>
+        </div>
       </div>
 
       {error && <div className="card !border-danger/40 text-danger mb-4">{error}</div>}
@@ -198,6 +203,29 @@ export default function ObjectsPage() {
           {mode === 'upload'
             ? <button className="btn btn-primary" disabled={uploading || !dirFiles} onClick={submitUpload}>{uploading ? <Spinner light /> : '上传并添加'}</button>
             : <button className="btn btn-primary" onClick={createManual}>创建</button>}
+        </div>
+      </Modal>
+
+      <Modal open={showCreateGuide} title="创建专家 / 专家团" onClose={() => setShowCreateGuide(false)}>
+        <div className="grid gap-3 text-sm text-muted leading-relaxed">
+          <div>
+            创建、转换或编辑专家/专家团由 AI 完成：直接在 <strong className="text-ink">OpenWork 对话框</strong>中
+            用自然语言提出需求即可，系统会自动调用 <code className="mx-0.5">mobilework-expert-manager</code>
+            技能（先确认业务方案，再生成 OpenCode 格式专家包）。
+          </div>
+          <div>
+            <div className="label">示例（复制到对话框发送）：</div>
+            <div className="card !p-3 bg-page/60 text-xs font-mono leading-relaxed">
+              请加载本插件捆绑的 mobilework-expert-manager 技能（skills/mobilework-expert-manager/SKILL.md），
+              按其中协议帮我创建一个负责代码评审的专家团，包含 3 个成员。
+            </div>
+          </div>
+          <div>
+            生成完成后，把产物路径告诉我（或直接在本页「添加专家/专家团」上传），即可导入评测中心。
+          </div>
+        </div>
+        <div className="flex justify-end mt-4">
+          <button className="btn btn-primary" onClick={() => setShowCreateGuide(false)}>知道了</button>
         </div>
       </Modal>
     </div>

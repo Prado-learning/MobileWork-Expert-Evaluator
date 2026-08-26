@@ -62,4 +62,7 @@ export const api = {
   updateModel: (id, body) => req(`/api/models/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteModel: (id) => req(`/api/models/${id}`, { method: 'DELETE' }),
   browse: (path) => req(`/api/fs/browse?path=${encodeURIComponent(path || '')}`),
+  // Expert Manager 桥接（AI 创建/编辑专家）
+  expertManagerStatus: () => req('/api/expert-manager/status'),
+  expertManagerGenerate: (body) => req('/api/expert-manager/generate', { method: 'POST', body: JSON.stringify(body) }),
 }

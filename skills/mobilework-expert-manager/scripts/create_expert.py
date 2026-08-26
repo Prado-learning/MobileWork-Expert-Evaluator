@@ -1,0 +1,2884 @@
+#!/usr/bin/env python3
+"""Generate a MobileWork expert or expert-team package from expert.json."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import errno
+import hashlib
+import html
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import tempfile
+import threading
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, cast
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import package_contract as contract
+import cli_contract
+import execution_context
+import gitignore_contract
+import manifest_contract
+import output_sanitizer
+import permission_policy
+import plugin_contract
+import renderers
+import skill_contract
+import workflow_autonomy
+
+
+NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$|^(primary|secondary|accent|success|warning|error|info)$")
+AVATAR_RE = re.compile(r"^(https://[^\s]+|[A-Za-z0-9._/-]+\.(?:png|jpg|jpeg|webp|gif|svg))$", re.IGNORECASE)
+HTTP_AVATAR_RE = re.compile(r"^https://", re.IGNORECASE)
+DEFAULT_COLOR = "primary"
+ACTION_VALUES = {"allow", "ask", "deny"}
+EXPERT_DIR = contract.PACKAGE_RUNTIME_DIR
+AGENTS_SUBDIR = "agents"
+SKILLS_SUBDIR = "skills"
+COMMANDS_SUBDIR = "commands"
+TOOLS_SUBDIR = "tools"
+PLUGINS_SUBDIR = "plugins"
+AVATARS_DIR = "avatars"
+REFERENCES_DIR = contract.REFERENCES_SUBDIR
+INSTRUCTIONS_DIR = contract.INSTRUCTIONS_SUBDIR
+MANIFEST_FILE = "expert.json"
+RUNTIME_CONFIG = "opencode.json"
+REQUIRED_GENERATED_FILES = (MANIFEST_FILE, "README.md", RUNTIME_CONFIG)
+CONTROLLED_TARGET_ENV = "MOBILEWORK_EXPERT_MANAGER_TARGET"
+PACKAGE_LOCK_SUFFIX = ".mobilework.lock"
+PACKAGE_LOCK_OWNER = "owner.json"
+PACKAGE_LOCK_UNPUBLISHED_OWNER = ".unpublished-owner"
+PACKAGE_LOCK_TIMEOUT_SECONDS = 30.0
+PACKAGE_LOCK_HEARTBEAT_SECONDS = 1.0
+PACKAGE_LOCK_STALE_SECONDS = 30.0
+PACKAGE_LOCK_POLL_SECONDS = 0.05
+PACKAGE_LOCK_PROTOCOL_VERSION = 2
+WINDOWS_LOCK_RETRYABLE_WINERRORS = frozenset({5, 32, 33})
+WINDOWS_LOCK_RETRYABLE_ERRNOS = frozenset(
+    {errno.EACCES, errno.EBUSY, errno.EPERM}
+)
+WINDOWS_LOCK_MAX_RETRIES = 249
+WINDOWS_LOCK_RETRY_DELAY_SECONDS = 0.002
+PACKAGE_LOCK_OWNER_FIELDS = frozenset(
+    {"ownerToken", "pid", "createdAt", "heartbeatAt", "protocolVersion"}
+)
+AVATAR_PALETTE = [
+    "#2563eb",
+    "#0f766e",
+    "#c2410c",
+    "#7c3aed",
+    "#be123c",
+    "#047857",
+    "#b45309",
+    "#4338ca",
+]
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"error: {output_sanitizer.sanitize_text(message)}")
+
+
+def normalized_output_dir(
+    output_dir: Path | None,
+    *,
+    creation_target: str | None = None,
+) -> Path:
+    """Resolve the only output root allowed by the current host contract."""
+    try:
+        return execution_context.resolve_execution_context(
+            requested_output_dir=output_dir,
+            creation_target=creation_target,
+        ).output_root
+    except execution_context.ExecutionContextError as error:
+        fail(f"{error.code}: {error}")
+
+
+def package_lock_path(output_root: Path, slug: str) -> Path:
+    return output_root / f".{slug}{PACKAGE_LOCK_SUFFIX}"
+
+
+def process_is_alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        process_query_limited_information = 0x1000
+        still_active = 259
+        error_invalid_parameter = 87
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        )
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            error = ctypes.get_last_error()
+            if error == error_invalid_parameter:
+                return False
+            # Access denied and unexpected lookup failures are fail-closed:
+            # an unverified PID must not allow another process to steal a lock.
+            return True
+        try:
+            exit_code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return True
+            return exit_code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def utc_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def valid_lock_timestamp(value: Any) -> float | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.timestamp()
+
+
+def normalized_lock_owner(value: Any) -> dict[str, Any] | None:
+    if (
+        isinstance(value, dict)
+        and set(value) == PACKAGE_LOCK_OWNER_FIELDS
+        and isinstance(value.get("ownerToken"), str)
+        and bool(value["ownerToken"])
+        and isinstance(value.get("pid"), int)
+        and not isinstance(value["pid"], bool)
+        and value["pid"] > 0
+        and valid_lock_timestamp(value.get("createdAt")) is not None
+        and valid_lock_timestamp(value.get("heartbeatAt")) is not None
+        and value.get("protocolVersion") == PACKAGE_LOCK_PROTOCOL_VERSION
+    ):
+        return {**value, "kind": "v2"}
+
+    # Read compatibility for generators that were already running during the
+    # protocol-v2 rollout. New Python and Electron owners publish v2 only.
+    if (
+        isinstance(value, dict)
+        and isinstance(value.get("pid"), int)
+        and not isinstance(value["pid"], bool)
+        and value["pid"] > 0
+        and isinstance(value.get("token"), str)
+        and bool(value["token"])
+        and valid_lock_timestamp(value.get("startedAt")) is not None
+    ):
+        return {
+            "ownerToken": value["token"],
+            "pid": value["pid"],
+            "createdAt": value["startedAt"],
+            "heartbeatAt": value["startedAt"],
+            "protocolVersion": 1,
+            "kind": "legacy",
+        }
+    return None
+
+
+def read_lock_owner(lock_path: Path) -> dict[str, Any] | None:
+    try:
+        raw = json.loads((lock_path / PACKAGE_LOCK_OWNER).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return normalized_lock_owner(raw)
+
+
+def run_windows_lock_operation(
+    operation: Callable[[], None],
+    *,
+    platform_name: str | None = None,
+) -> None:
+    platform = os.name if platform_name is None else platform_name
+    attempt = 0
+    while True:
+        try:
+            operation()
+            return
+        except OSError as error:
+            if (
+                platform != "nt"
+                or (
+                    getattr(error, "winerror", None)
+                    not in WINDOWS_LOCK_RETRYABLE_WINERRORS
+                    and error.errno not in WINDOWS_LOCK_RETRYABLE_ERRNOS
+                )
+                or attempt >= WINDOWS_LOCK_MAX_RETRIES
+            ):
+                raise
+            # Windows may briefly keep a lock entry open after a contender reads it.
+            attempt += 1
+            time.sleep(WINDOWS_LOCK_RETRY_DELAY_SECONDS)
+
+
+def replace_lock_entry(
+    source: Path,
+    target: Path,
+    *,
+    platform_name: str | None = None,
+) -> None:
+    run_windows_lock_operation(
+        lambda: os.replace(source, target),
+        platform_name=platform_name,
+    )
+
+
+def remove_lock_quarantine(
+    target: Path,
+    *,
+    platform_name: str | None = None,
+) -> None:
+    run_windows_lock_operation(
+        lambda: shutil.rmtree(target),
+        platform_name=platform_name,
+    )
+
+
+def write_lock_owner(lock_path: Path, owner: dict[str, Any]) -> None:
+    temporary = lock_path / f".{PACKAGE_LOCK_OWNER}.{owner['ownerToken']}.{uuid.uuid4().hex}.tmp"
+    descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(owner, separators=(",", ":")) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        replace_lock_entry(temporary, lock_path / PACKAGE_LOCK_OWNER)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def lock_owner_is_stale(
+    owner: dict[str, Any] | None,
+    stale_seconds: float,
+    *,
+    now: float | None = None,
+) -> bool:
+    heartbeat = valid_lock_timestamp(owner.get("heartbeatAt")) if owner else None
+    return bool(
+        owner
+        and heartbeat is not None
+        and (time.time() if now is None else now) - heartbeat >= stale_seconds
+        and not process_is_alive(owner["pid"])
+    )
+
+
+def quarantine_token(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9_-]", "-", value)[:160]
+    return sanitized or "unknown"
+
+
+def write_unpublished_lock_owner(lock_path: Path, owner_token: str) -> None:
+    marker_path = lock_path / PACKAGE_LOCK_UNPUBLISHED_OWNER
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    for optional_flag in ("O_CLOEXEC", "O_NOFOLLOW"):
+        flags |= getattr(os, optional_flag, 0)
+    descriptor = os.open(marker_path, flags, 0o600)
+    payload = f"{owner_token}\n".encode("ascii")
+    try:
+        offset = 0
+        while offset < len(payload):
+            offset += os.write(descriptor, payload[offset:])
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def unpublished_lock_owner_matches(lock_path: Path, owner_token: str) -> bool:
+    marker_path = lock_path / PACKAGE_LOCK_UNPUBLISHED_OWNER
+    flags = os.O_RDONLY
+    for optional_flag in ("O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK"):
+        flags |= getattr(os, optional_flag, 0)
+    try:
+        descriptor = os.open(marker_path, flags)
+    except OSError:
+        return False
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return False
+        expected = f"{owner_token}\n".encode("ascii")
+        return os.read(descriptor, len(expected) + 1) == expected
+    except OSError:
+        return False
+    finally:
+        os.close(descriptor)
+
+
+def restore_lock_quarantine(lock_path: Path, quarantine_path: Path) -> bool:
+    if lock_path.exists():
+        return False
+    try:
+        replace_lock_entry(quarantine_path, lock_path)
+    except OSError:
+        return False
+    return True
+
+
+def cleanup_unpublished_lock(
+    lock_path: Path,
+    owner_token: str,
+) -> None:
+    quarantine_path = lock_path.with_name(
+        f"{lock_path.name}.unpublished-{quarantine_token(owner_token)}-{uuid.uuid4().hex}"
+    )
+    try:
+        replace_lock_entry(lock_path, quarantine_path)
+    except FileNotFoundError:
+        return
+    if not unpublished_lock_owner_matches(quarantine_path, owner_token):
+        restored = restore_lock_quarantine(lock_path, quarantine_path)
+        location = (
+            "restored replacement lock"
+            if restored
+            else f"quarantine kept at {quarantine_path.name}"
+        )
+        raise RuntimeError(
+            f"expert package lock changed before owner publication; {location}"
+        )
+    remove_lock_quarantine(quarantine_path)
+
+
+def quarantine_owned_lock(
+    lock_path: Path,
+    expected: dict[str, Any],
+    reason: str,
+    validate: Callable[[dict[str, Any]], bool],
+) -> Path | None:
+    quarantine_path = lock_path.with_name(
+        f"{lock_path.name}.{reason}-{quarantine_token(expected['ownerToken'])}-{uuid.uuid4().hex}"
+    )
+    try:
+        replace_lock_entry(lock_path, quarantine_path)
+    except FileNotFoundError:
+        return None
+
+    moved = read_lock_owner(quarantine_path)
+    if (
+        moved is None
+        or moved.get("ownerToken") != expected.get("ownerToken")
+        or not validate(moved)
+    ):
+        restored = restore_lock_quarantine(lock_path, quarantine_path)
+        location = (
+            "restored original lock"
+            if restored
+            else f"quarantine kept at {quarantine_path.name}"
+        )
+        raise RuntimeError(f"expert package lock changed during quarantine; {location}")
+    return quarantine_path
+
+
+def reclaim_stale_lock(lock_path: Path, stale_seconds: float) -> bool:
+    owner = read_lock_owner(lock_path)
+    if not lock_owner_is_stale(owner, stale_seconds):
+        return False
+    assert owner is not None
+    quarantine_path = quarantine_owned_lock(
+        lock_path,
+        owner,
+        "stale",
+        lambda moved: lock_owner_is_stale(moved, stale_seconds),
+    )
+    if quarantine_path is not None:
+        remove_lock_quarantine(quarantine_path)
+    return True
+
+
+def start_lock_heartbeat(
+    lock_path: Path,
+    owner: dict[str, Any],
+    interval_seconds: float,
+) -> tuple[threading.Event, threading.Thread]:
+    stopped = threading.Event()
+
+    def heartbeat() -> None:
+        while not stopped.wait(interval_seconds):
+            current = read_lock_owner(lock_path)
+            if (
+                current is None
+                or current.get("kind") != "v2"
+                or current.get("ownerToken") != owner["ownerToken"]
+            ):
+                return
+            owner["heartbeatAt"] = utc_now()
+            try:
+                write_lock_owner(lock_path, owner)
+            except OSError:
+                return
+
+    thread = threading.Thread(
+        target=heartbeat,
+        name="mobilework-package-lock-heartbeat",
+        daemon=True,
+    )
+    thread.start()
+    return stopped, thread
+
+
+def release_owned_lock(lock_path: Path, owner: dict[str, Any]) -> None:
+    current = read_lock_owner(lock_path)
+    if (
+        current is None
+        or current.get("kind") != "v2"
+        or current.get("ownerToken") != owner["ownerToken"]
+    ):
+        raise RuntimeError("expert package lock ownership changed; refusing to delete active lock")
+    quarantine_path = quarantine_owned_lock(
+        lock_path,
+        owner,
+        "release",
+        lambda moved: moved.get("kind") == "v2"
+        and moved.get("ownerToken") == owner["ownerToken"],
+    )
+    if quarantine_path is None:
+        raise RuntimeError("expert package lock disappeared before release")
+    remove_lock_quarantine(quarantine_path)
+
+
+@contextlib.contextmanager
+def package_lock(
+    output_root: Path,
+    slug: str,
+    *,
+    timeout_seconds: float = PACKAGE_LOCK_TIMEOUT_SECONDS,
+    heartbeat_seconds: float = PACKAGE_LOCK_HEARTBEAT_SECONDS,
+    stale_seconds: float = PACKAGE_LOCK_STALE_SECONDS,
+    poll_seconds: float = PACKAGE_LOCK_POLL_SECONDS,
+):
+    """Share a sibling package lock with MobileWork's projection synchronizer."""
+    if heartbeat_seconds <= 0:
+        raise ValueError("expert package lock heartbeat_seconds must be positive")
+    if stale_seconds <= heartbeat_seconds:
+        raise ValueError("expert package lock stale_seconds must be greater than heartbeat_seconds")
+    if timeout_seconds < 0 or poll_seconds <= 0:
+        raise ValueError("expert package lock timeout/poll values are invalid")
+    lock_path = package_lock_path(output_root, slug)
+    started_at = time.monotonic()
+    timestamp = utc_now()
+    owner: dict[str, Any] = {
+        "ownerToken": uuid.uuid4().hex,
+        "pid": os.getpid(),
+        "createdAt": timestamp,
+        "heartbeatAt": timestamp,
+        "protocolVersion": PACKAGE_LOCK_PROTOCOL_VERSION,
+    }
+    while True:
+        try:
+            lock_path.mkdir(mode=0o700)
+        except FileExistsError:
+            if reclaim_stale_lock(lock_path, stale_seconds):
+                continue
+            if time.monotonic() - started_at >= timeout_seconds:
+                fail(f"timed out waiting for expert package lock: {slug}")
+            time.sleep(poll_seconds)
+            continue
+        try:
+            write_unpublished_lock_owner(lock_path, owner["ownerToken"])
+            write_lock_owner(lock_path, owner)
+        except Exception:
+            cleanup_unpublished_lock(lock_path, owner["ownerToken"])
+            raise
+        break
+    stopped, heartbeat_thread = start_lock_heartbeat(lock_path, owner, heartbeat_seconds)
+    try:
+        yield
+    finally:
+        stopped.set()
+        heartbeat_thread.join()
+        release_owned_lock(lock_path, owner)
+
+
+def calculate_package_revision(package_dir: Path) -> str:
+    """Match the desktop synchronizer's deterministic package revision hash."""
+    digest = hashlib.sha256()
+    files: list[Path] = []
+    for current_root, dir_names, file_names in os.walk(package_dir, followlinks=False):
+        current = Path(current_root)
+        for directory in list(dir_names):
+            candidate = current / directory
+            if directory in {"__pycache__", ".git"}:
+                dir_names.remove(directory)
+            elif candidate.is_symlink():
+                fail(f"expert package cannot contain symlink: {candidate.relative_to(package_dir)}")
+        for file_name in file_names:
+            if file_name == ".DS_Store" or file_name.endswith(".pyc"):
+                continue
+            candidate = current / file_name
+            if candidate.is_symlink():
+                fail(f"expert package cannot contain symlink: {candidate.relative_to(package_dir)}")
+            files.append(candidate)
+    for file_path in sorted(files, key=lambda item: item.relative_to(package_dir).as_posix()):
+        relative = file_path.relative_to(package_dir).as_posix().encode("utf-8")
+        data = file_path.read_bytes()
+        digest.update(relative)
+        digest.update(b"\0")
+        digest.update(str(len(data)).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(data)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def validate_generated_project(project_dir: Path, output_dir: Path, slug: str) -> None:
+    expected = execution_context.canonical_path(output_dir / slug)
+    actual = execution_context.canonical_path(project_dir)
+    if actual != expected:
+        fail(f"generated project directory mismatch: expected {expected}, got {actual}")
+    for relative_path in REQUIRED_GENERATED_FILES:
+        if not (actual / relative_path).is_file():
+            fail(f"missing required generated file: {relative_path}")
+    generated_json: dict[str, Any] = {}
+    for relative_path in (MANIFEST_FILE, RUNTIME_CONFIG):
+        try:
+            generated_json[relative_path] = json.loads(
+                (actual / relative_path).read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            fail(f"invalid generated JSON: {relative_path}")
+    generated_manifest = generated_json[MANIFEST_FILE]
+    if not isinstance(generated_manifest, dict) or generated_manifest.get("slug") != slug:
+        fail(f"generated expert.json slug mismatch: expected {slug}")
+
+
+def validate_slug(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not NAME_RE.fullmatch(value):
+        fail(f"{field} must match ^[a-z0-9]+(-[a-z0-9]+)*$")
+    if len(value) > 64:
+        fail(f"{field} must be 64 characters or fewer")
+    return value
+
+
+def text_list(values: Any, field: str, *, default: list[str] | None = None) -> list[str]:
+    if values is None:
+        return list(default or [])
+    if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+        fail(f"{field} must be a list of strings")
+    return values
+
+
+def optional_text(value: Any, field: str, *, default: str = "") -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        fail(f"{field} must be a string")
+    return value
+
+
+def validate_avatar_url(value: Any, field: str) -> str:
+    avatar_url = optional_text(value, field)
+    if avatar_url and not AVATAR_RE.fullmatch(avatar_url):
+        fail(f"{field} must be an https URL or a supported relative image path")
+    if avatar_url and not is_remote_avatar(avatar_url):
+        validate_local_avatar_path(avatar_url, field)
+    return avatar_url
+
+
+def is_remote_avatar(avatar_url: str) -> bool:
+    return bool(HTTP_AVATAR_RE.match(avatar_url))
+
+
+def validate_local_avatar_path(avatar_url: str, field: str) -> Path:
+    try:
+        normalized = contract.posix_relative_path(avatar_url, field)
+    except contract.ContractError as exc:
+        fail(str(exc))
+    path = Path(normalized)
+    if not path.name:
+        fail(f"{field} must point to an image file")
+    if path.suffix.lower() not in contract.AVATAR_SUFFIXES:
+        fail(f"{field} must use a supported image suffix")
+    return path
+
+
+def default_avatar_path(identifier: str) -> str:
+    return f"{AVATARS_DIR}/{identifier}.svg"
+
+
+def copied_avatar_path(identifier: str, avatar_url: str) -> str:
+    path = validate_local_avatar_path(avatar_url, "avatar_url")
+    if path.parts and path.parts[0] == AVATARS_DIR:
+        return path.as_posix()
+    return f"{AVATARS_DIR}/{identifier}{path.suffix.lower()}"
+
+
+def avatar_label(display_name: str, fallback: str) -> str:
+    compact = "".join(char for char in display_name.strip() if char.isalnum())
+    if compact:
+        return compact[:2].upper()
+    return fallback[:2].upper()
+
+
+def avatar_color(seed: str) -> str:
+    digest = hashlib.sha256(seed.encode("utf-8")).digest()
+    return AVATAR_PALETTE[digest[0] % len(AVATAR_PALETTE)]
+
+
+def render_placeholder_avatar(identifier: str, display_name: str) -> bytes:
+    label = html.escape(avatar_label(display_name, identifier))
+    title = html.escape(display_name or identifier)
+    color = avatar_color(identifier)
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="{title}">
+  <rect width="256" height="256" rx="48" fill="{color}"/>
+  <circle cx="196" cy="48" r="56" fill="#ffffff" opacity="0.18"/>
+  <circle cx="64" cy="208" r="72" fill="#000000" opacity="0.12"/>
+  <text x="128" y="148" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="700" fill="#ffffff">{label}</text>
+</svg>
+"""
+    return svg.encode("utf-8")
+
+
+def read_local_avatar(manifest_dir: Path, avatar_url: str) -> bytes | None:
+    source_path = manifest_dir / validate_local_avatar_path(avatar_url, "avatar_url")
+    if source_path.is_symlink():
+        fail(f"avatar_url must not reference a symlink: {avatar_url}")
+    if not source_path.is_file():
+        return None
+    content = source_path.read_bytes()
+    try:
+        contract.validate_avatar_bytes(content, source_path.suffix, "avatar_url")
+    except contract.ContractError as exc:
+        fail(str(exc))
+    return content
+
+
+def add_avatar_asset(
+    assets: dict[str, bytes],
+    target: str,
+    content: bytes,
+    *,
+    conflict_suffix: str,
+) -> str:
+    existing = assets.get(target)
+    if existing is None or existing == content:
+        assets[target] = content
+        return target
+
+    path = Path(target)
+    stem = (path.parent / path.stem).as_posix()
+    suffix = path.suffix
+    candidate = f"{stem}-{conflict_suffix}{suffix}"
+    counter = 2
+    while candidate in assets and assets[candidate] != content:
+        candidate = f"{stem}-{conflict_suffix}-{counter}{suffix}"
+        counter += 1
+    assets[candidate] = content
+    return candidate
+
+
+def prepare_avatar_assets(manifest: dict[str, Any], manifest_dir: Path) -> None:
+    assets: dict[str, bytes] = {}
+    source_manifest = manifest["source_manifest"]
+
+    def prepare_slot(
+        current_url: str,
+        *,
+        identifier: str,
+        display_name: str,
+        conflict_suffix: str,
+        source_container: dict[str, Any],
+    ) -> str:
+        if current_url and is_remote_avatar(current_url):
+            return current_url
+        if current_url:
+            existing = read_local_avatar(manifest_dir, current_url)
+            if existing is not None:
+                target = copied_avatar_path(identifier, current_url)
+                target = add_avatar_asset(assets, target, existing, conflict_suffix=conflict_suffix)
+                source_container["avatar_url"] = target
+                return target
+        target = default_avatar_path(identifier)
+        target = add_avatar_asset(
+            assets,
+            target,
+            render_placeholder_avatar(identifier, display_name),
+            conflict_suffix=conflict_suffix,
+        )
+        source_container["avatar_url"] = target
+        return target
+
+    manifest["avatar_url"] = prepare_slot(
+        manifest["avatar_url"],
+        identifier=manifest["slug"],
+        display_name=manifest["name"],
+        conflict_suffix="package",
+        source_container=source_manifest,
+    )
+
+    if manifest["type"] == "expert":
+        source_primary = source_manifest.setdefault("agent", {})
+    else:
+        source_primary = source_manifest.setdefault("primary_agent", {})
+    primary = manifest["primary_agent"]
+    primary["avatar_url"] = prepare_slot(
+        primary["avatar_url"],
+        identifier=primary["id"],
+        display_name=primary["display_name"],
+        conflict_suffix="agent",
+        source_container=source_primary,
+    )
+
+    if manifest["type"] == "team":
+        source_subagents = source_manifest.setdefault("subagents", [])
+        for index, sub in enumerate(manifest["subagents"]):
+            if index >= len(source_subagents) or not isinstance(source_subagents[index], dict):
+                fail(f"subagents[{index}] must be a mapping")
+            sub["avatar_url"] = prepare_slot(
+                sub["avatar_url"],
+                identifier=sub["id"],
+                display_name=sub["display_name"],
+                conflict_suffix="agent",
+                source_container=source_subagents[index],
+            )
+
+    manifest["avatar_assets"] = assets
+
+
+def write_avatar_assets(project_dir: Path, manifest: dict[str, Any]) -> None:
+    (project_dir / AVATARS_DIR).mkdir(parents=True, exist_ok=True)
+    for relative_path, content in manifest.get("avatar_assets", {}).items():
+        target = project_dir / validate_local_avatar_path(relative_path, "avatar asset")
+        try:
+            contract.validate_avatar_bytes(content, target.suffix, f"avatar asset {relative_path}")
+        except contract.ContractError as exc:
+            fail(str(exc))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+
+
+def validate_permission_value(value: Any, field: str) -> Any:
+    if isinstance(value, str):
+        if value not in ACTION_VALUES:
+            fail(f"{field} must be allow, ask, or deny")
+        return value
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, nested in value.items():
+            if not isinstance(key, str):
+                fail(f"{field} keys must be strings")
+            result[key] = validate_permission_value(nested, f"{field}.{key}")
+        return result
+    fail(f"{field} must be allow/ask/deny or a mapping")
+
+
+def normalize_permission(raw: Any, field: str) -> dict[str, Any]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        fail(f"{field} must be a mapping")
+    return {key: validate_permission_value(value, f"{field}.{key}") for key, value in raw.items()}
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        fail("manifest root must be a JSON object")
+    return data
+
+
+def dump_yaml(data: dict[str, Any]) -> str:
+    return renderers.dump_yaml(data)
+
+
+def validate_package_file_path(
+    value: Any,
+    field: str,
+    *,
+    allowed_suffixes: set[str] | None = None,
+    required_prefix: str | None = None,
+    allow_glob: bool = False,
+) -> str:
+    try:
+        normalized = contract.posix_relative_path(value, field, allow_glob=allow_glob)
+    except contract.ContractError as exc:
+        fail(str(exc))
+    path = Path(normalized)
+    if required_prefix and not normalized.startswith(required_prefix.rstrip("/") + "/"):
+        fail(f"{field} must be under {required_prefix}/")
+    if allowed_suffixes and path.suffix.lower() not in allowed_suffixes:
+        fail(f"{field} must use one of these suffixes: {', '.join(sorted(allowed_suffixes))}")
+    return normalized
+
+
+def validate_text_resource_list(
+    raw: Any,
+    field: str,
+    *,
+    required_prefix: str,
+) -> list[dict[str, str]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        fail(f"{field} must be a list")
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            fail(f"{field}[{index}] must be a mapping")
+        unknown = sorted(set(item) - {"path", "content"})
+        if unknown:
+            fail(f"{field}[{index}] contains unsupported fields: {', '.join(unknown)}")
+        path = validate_package_file_path(
+            item.get("path"),
+            f"{field}[{index}].path",
+            required_prefix=required_prefix,
+        )
+        content = optional_text(item.get("content"), f"{field}[{index}].content")
+        if not content.strip():
+            fail(f"{field}[{index}].content must be non-empty")
+        if path in seen:
+            fail(f"{field}[{index}].path duplicates {path}")
+        seen.add(path)
+        result.append({"path": path, "content": content})
+    return result
+
+
+def resource_paths(resources: list[dict[str, str]]) -> set[str]:
+    return {item["path"] for item in resources}
+
+
+def normalize_commands(
+    raw: Any,
+    *,
+    agent_ids: set[str],
+    execution_agent_id: str,
+) -> list[dict[str, Any]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        fail("runtime_extensions.commands must be a list")
+    result: list[dict[str, Any]] = []
+    command_policy = contract.expert_runtime_projection_policy()["command"]
+    seen: set[str] = set()
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            fail(f"runtime_extensions.commands[{index}] must be a mapping")
+        unknown = sorted(set(item) - {"name", "template", "description", "agent", "subtask", "model"})
+        if unknown:
+            fail(f"runtime_extensions.commands[{index}] contains unsupported fields: {', '.join(unknown)}")
+        command_name_field = f"runtime_extensions.commands[{index}].name"
+        try:
+            name = workflow_autonomy.validate_command_name(
+                item.get("name"),
+                command_name_field,
+            )
+        except workflow_autonomy.WorkflowContractError as exc:
+            fail(str(exc))
+        if name in seen:
+            fail(f"runtime_extensions.commands[{index}].name duplicates {name}")
+        seen.add(name)
+        template = optional_text(item.get("template"), f"runtime_extensions.commands[{index}].template")
+        if not template.strip():
+            fail(f"runtime_extensions.commands[{index}].template must be non-empty")
+        command: dict[str, Any] = {
+            "name": name,
+            "template": template,
+            "description": optional_text(item.get("description"), f"runtime_extensions.commands[{index}].description"),
+            "agent": execution_agent_id,
+            "subtask": command_policy["subtask"],
+        }
+        if item.get("agent") is not None:
+            command_agent = validate_slug(
+                item.get("agent"),
+                f"runtime_extensions.commands[{index}].agent",
+            )
+            if command_agent not in agent_ids:
+                fail(
+                    f"runtime_extensions.commands[{index}].agent references "
+                    f"undeclared agent {command_agent}"
+                )
+            if command_agent != execution_agent_id:
+                fail(
+                    f"runtime_extensions.commands[{index}].agent must reference "
+                    f"the mode all Agent {execution_agent_id}"
+                )
+        if item.get("subtask") is not None:
+            if not isinstance(item["subtask"], bool):
+                fail(f"runtime_extensions.commands[{index}].subtask must be a boolean")
+            if item["subtask"] is not command_policy["subtask"]:
+                fail(
+                    f"runtime_extensions.commands[{index}].subtask must be "
+                    f"{str(command_policy['subtask']).lower()} "
+                    "for package entry commands"
+                )
+        if item.get("model") is not None:
+            try:
+                command["model"] = contract.normalize_provider_model(
+                    item.get("model"),
+                    f"runtime_extensions.commands[{index}].model",
+                )
+            except contract.ContractError as exc:
+                fail(str(exc))
+        result.append(command)
+    return result
+
+
+def normalize_embedded_files(
+    raw: Any,
+    field: str,
+    *,
+    allowed_suffixes: set[str],
+    purpose_required: bool = False,
+) -> list[dict[str, str]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        fail(f"{field} must be a list")
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            fail(f"{field}[{index}] must be a mapping")
+        allowed_keys = (
+            contract.CUSTOM_TOOL_ENTRY_KEYS
+            if purpose_required
+            else frozenset({"path", "content"})
+        )
+        unknown = sorted(set(item) - allowed_keys)
+        if unknown:
+            fail(f"{field}[{index}] contains unsupported fields: {', '.join(unknown)}")
+        path = validate_package_file_path(
+            item.get("path"),
+            f"{field}[{index}].path",
+            allowed_suffixes=allowed_suffixes,
+        )
+        content = optional_text(item.get("content"), f"{field}[{index}].content")
+        if not content.strip():
+            fail(f"{field}[{index}].content must be non-empty")
+        if path in seen:
+            fail(f"{field}[{index}].path duplicates {path}")
+        seen.add(path)
+        normalized = {"path": path, "content": content}
+        if purpose_required:
+            purpose = optional_text(item.get("purpose"), f"{field}[{index}].purpose")
+            if not purpose.strip():
+                fail(f"{field}[{index}].purpose must be non-empty")
+            normalized["purpose"] = purpose
+        result.append(normalized)
+    return result
+
+
+def validate_package_json(raw: Any) -> dict[str, Any]:
+    try:
+        return contract.normalize_package_dependencies(
+            raw,
+            "runtime_extensions.plugins.package_json",
+        )
+    except contract.ContractError as exc:
+        fail(str(exc))
+
+
+def normalize_plugins(raw: Any) -> dict[str, Any]:
+    if raw is None:
+        return {"npm": [], "local": [], "package_json": {}}
+    if not isinstance(raw, dict):
+        fail("runtime_extensions.plugins must be a mapping")
+    unknown = sorted(set(raw) - {"npm", "local", "package_json"})
+    if unknown:
+        fail(f"runtime_extensions.plugins contains unsupported fields: {', '.join(unknown)}")
+    npm_specs = text_list(raw.get("npm"), "runtime_extensions.plugins.npm")
+    parsed_npm: list[plugin_contract.NpmPluginSpec] = []
+    canonical_indexes: dict[str, int] = {}
+    duplicate: tuple[int, int] | None = None
+    for index, npm_spec in enumerate(npm_specs):
+        try:
+            parsed = plugin_contract.parse_npm_plugin_spec(npm_spec)
+        except plugin_contract.PluginContractError as exc:
+            fail(
+                f"{plugin_contract.ERROR_CODE}: runtime_extensions.plugins.npm[{index}]: {exc}"
+            )
+        previous_index = canonical_indexes.get(parsed["canonicalKey"])
+        if previous_index is not None and duplicate is None:
+            duplicate = (index, previous_index)
+        canonical_indexes[parsed["canonicalKey"]] = index
+        parsed_npm.append(parsed)
+    if duplicate is not None:
+        index, previous_index = duplicate
+        fail(
+            f"{plugin_contract.DUPLICATE_CODE}: runtime_extensions.plugins.npm[{index}] "
+            f"duplicates the canonical npm Plugin declared at index {previous_index}"
+        )
+    for index, parsed in enumerate(parsed_npm):
+        if not parsed["isPinned"]:
+            fail(
+                f"{plugin_contract.UNPINNED_CODE}: runtime_extensions.plugins.npm[{index}] "
+                "must pin a registry package to an exact SemVer"
+            )
+    return {
+        "npm": [parsed["normalized"] for parsed in parsed_npm],
+        "local": normalize_embedded_files(
+            raw.get("local"),
+            "runtime_extensions.plugins.local",
+            allowed_suffixes={".js", ".ts"},
+        ),
+        "package_json": validate_package_json(raw.get("package_json")),
+    }
+
+
+def normalize_references(raw: Any, slug: str, reference_file_paths: set[str]) -> dict[str, Any]:
+    try:
+        return contract.normalize_reference_entries(
+            raw,
+            "runtime_extensions.references",
+            slug=slug,
+            reference_file_paths=reference_file_paths,
+        )
+    except contract.ContractError as exc:
+        fail(str(exc))
+
+
+def normalize_instructions(raw: Any, slug: str, local_file_paths: set[str]) -> list[str]:
+    values = text_list(raw, "runtime_extensions.instructions")
+    duplicate_instruction = contract.first_duplicate(values)
+    if duplicate_instruction is not None:
+        fail(f"runtime_extensions.instructions duplicates {duplicate_instruction}")
+    result: list[str] = []
+    for index, value in enumerate(values):
+        if not value.strip():
+            fail(f"runtime_extensions.instructions[{index}] must be non-empty")
+        if value.lower().startswith("https://"):
+            print(
+                output_sanitizer.sanitize_text(
+                    f"warning: runtime_extensions.instructions[{index}] "
+                    f"is remote and not reproducible: {value}"
+                ),
+                file=sys.stderr,
+            )
+            result.append(value)
+            continue
+        if re.match(r"^http://", value, re.IGNORECASE):
+            fail(f"runtime_extensions.instructions[{index}] must use https, not http")
+        path = validate_package_file_path(
+            value,
+            f"runtime_extensions.instructions[{index}]",
+            allow_glob=True,
+        )
+        expected = contract.instruction_prefix(slug) + "/"
+        if not path.startswith(expected):
+            fail(f"runtime_extensions.instructions[{index}] must be under {contract.instruction_prefix(slug)}/")
+        if not contract.package_glob_matches(path, local_file_paths):
+            fail(f"runtime_extensions.instructions[{index}] has no matching instruction_files entry")
+        result.append(path)
+    return result
+
+
+def normalize_role_instructions(
+    raw: Any,
+    slug: str,
+    instruction_file_paths: set[str],
+) -> dict[str, dict[str, str]]:
+    try:
+        return contract.normalize_role_instruction_entries(
+            raw,
+            "runtime_extensions.role_instructions",
+            slug=slug,
+            instruction_file_paths=instruction_file_paths,
+        )
+    except contract.ContractError as exc:
+        fail(str(exc))
+
+
+def normalize_lsp(raw: Any) -> bool | dict[str, Any] | None:
+    try:
+        return contract.normalize_lsp_config(raw)
+    except contract.ContractError as exc:
+        fail(str(exc))
+
+
+def normalize_runtime_extensions(
+    raw: Any,
+    slug: str,
+    *,
+    agent_ids: set[str],
+    execution_agent_id: str,
+) -> dict[str, Any]:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        fail("runtime_extensions must be a mapping")
+    unknown = sorted(
+        set(raw)
+        - {
+            "commands", "custom_tools", "plugins", "reference_files",
+            "instruction_files", "references", "instructions", "role_instructions", "lsp",
+        }
+    )
+    if unknown:
+        fail(f"runtime_extensions contains unsupported fields: {', '.join(unknown)}")
+    reference_files = validate_text_resource_list(
+        raw.get("reference_files"),
+        "runtime_extensions.reference_files",
+        required_prefix=f"{EXPERT_DIR}/{REFERENCES_DIR}/{slug}",
+    )
+    instruction_files = validate_text_resource_list(
+        raw.get("instruction_files"),
+        "runtime_extensions.instruction_files",
+        required_prefix=f"{EXPERT_DIR}/{INSTRUCTIONS_DIR}/{slug}",
+    )
+    reference_file_paths = resource_paths(reference_files)
+    instruction_file_paths = resource_paths(instruction_files)
+    return {
+        "commands": normalize_commands(
+            raw.get("commands"),
+            agent_ids=agent_ids,
+            execution_agent_id=execution_agent_id,
+        ),
+        "custom_tools": normalize_embedded_files(
+            raw.get("custom_tools"),
+            "runtime_extensions.custom_tools",
+            allowed_suffixes={".js", ".ts"},
+            purpose_required=True,
+        ),
+        "plugins": normalize_plugins(raw.get("plugins")),
+        "reference_files": reference_files,
+        "instruction_files": instruction_files,
+        "references": normalize_references(raw.get("references"), slug, reference_file_paths),
+        "instructions": normalize_instructions(
+            raw.get("instructions"),
+            slug,
+            instruction_file_paths,
+        ),
+        "role_instructions": normalize_role_instructions(
+            raw.get("role_instructions"),
+            slug,
+            instruction_file_paths,
+        ),
+        "lsp": normalize_lsp(raw.get("lsp")),
+    }
+
+
+def normalize_package_resources(
+    raw: Any,
+    *,
+    declared_skills: set[str],
+    manifest_dir: Path,
+    skill_mode: str,
+) -> tuple[list[dict[str, str]], dict[str, bytes]]:
+    if raw is None:
+        return [], {}
+    if not isinstance(raw, list):
+        fail("package_resources must be a list")
+    normalized: list[dict[str, str]] = []
+    assets: dict[str, bytes] = {}
+    seen: set[str] = set()
+    prefix = f"{EXPERT_DIR}/{SKILLS_SUBDIR}/"
+    for index, item in enumerate(raw):
+        field = f"package_resources[{index}]"
+        if not isinstance(item, dict):
+            fail(f"{field} must be a mapping")
+        unknown = sorted(set(item) - {"path", "kind", "sha256"})
+        if unknown:
+            fail(f"{field} contains unsupported fields: {', '.join(unknown)}")
+        path = validate_package_file_path(item.get("path"), f"{field}.path", required_prefix=prefix.rstrip("/"))
+        parts = Path(path).parts
+        if len(parts) < 4 or parts[2] not in declared_skills:
+            fail(f"{field}.path must be inside a declared supplemental skill")
+        if Path(path).name == "SKILL.md" and skill_mode == "legacy":
+            fail(f"{field}.path must not declare generated SKILL.md")
+        if path in seen:
+            fail(f"{field}.path duplicates {path}")
+        seen.add(path)
+        kind = item.get("kind")
+        if kind not in {"text", "binary"}:
+            fail(f"{field}.kind must be text or binary")
+        source = manifest_dir / path
+        if source.is_symlink():
+            fail(f"{field}.path must not reference a symlink")
+        if not source.is_file():
+            fail(f"{field}.path source file does not exist: {source}")
+        content = source.read_bytes()
+        if kind == "text":
+            try:
+                content.decode("utf-8")
+            except UnicodeDecodeError:
+                fail(f"{field}.path must contain UTF-8 text")
+        digest = contract.sha256_bytes(content)
+        provided = item.get("sha256")
+        if skill_mode == "unified" and provided is None:
+            fail(f"{field}.sha256 is required for unified skill files")
+        if provided is not None and (not isinstance(provided, str) or not contract.SHA256_RE.fullmatch(provided)):
+            fail(f"{field}.sha256 must be a lowercase SHA-256 digest")
+        if provided is not None and provided != digest:
+            fail(f"{field}.sha256 does not match source file; expected {digest}")
+        normalized.append({"path": path, "kind": kind, "sha256": digest})
+        assets[path] = content
+    return normalized, assets
+
+
+def normalize_mcp(raw: Any) -> dict[str, dict[str, Any]]:
+    try:
+        return contract.normalize_mcp_servers(raw)
+    except contract.ContractError as exc:
+        fail(str(exc))
+
+
+def normalize_role(
+    raw: Any,
+    field: str,
+    *,
+    expected_mode: str,
+    default_steps: int,
+    skill_mode: str,
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        fail(f"{field} must be a mapping")
+    role_id = validate_slug(raw.get("id"), f"{field}.id")
+    mode = raw.get("mode", expected_mode)
+    if mode != expected_mode:
+        fail(f"{field}.mode must be {expected_mode}")
+    autonomy = raw.get("autonomy")
+    if autonomy not in permission_policy.AUTONOMY_ORDER:
+        fail(
+            f"{field}.autonomy is required and must be one of "
+            + ", ".join(permission_policy.AUTONOMY_ORDER)
+        )
+    display_name = raw.get("name", raw.get("title", role_id.replace("-", " ").title()))
+    if not isinstance(display_name, str):
+        fail(f"{field}.name must be a string")
+    role_display_name = optional_text(raw.get("display_name"), f"{field}.display_name", default=display_name)
+    profession = optional_text(raw.get("profession"), f"{field}.profession", default=display_name)
+    description = optional_text(raw.get("description"), f"{field}.description", default=f"{role_id} expert agent")
+    color = raw.get("color", DEFAULT_COLOR)
+    if not isinstance(color, str) or not COLOR_RE.fullmatch(color):
+        fail(f"{field}.color must be a hex color or supported theme color")
+    try:
+        runtime_options = contract.normalize_agent_runtime_options(
+            raw,
+            field,
+            expected_mode=expected_mode,
+            default_steps=default_steps,
+        )
+    except contract.ContractError as exc:
+        fail(str(exc))
+    try:
+        role_skills = (
+            skill_contract.normalize_role_refs(raw.get("skills"), f"{field}.skills")
+            if skill_mode == "unified"
+            else contract.skill_purposes(raw.get("skills"), f"{field}.skills")
+        )
+    except contract.ContractError as exc:
+        fail(str(exc))
+    role = {
+        "id": role_id,
+        "mode": mode,
+        "autonomy": autonomy,
+        "name": display_name,
+        "title": display_name,
+        "display_name": role_display_name,
+        "profession": profession,
+        "description": description,
+        "avatar_url": validate_avatar_url(raw.get("avatar_url"), f"{field}.avatar_url"),
+        "color": color,
+        **runtime_options,
+        "responsibilities": text_list(raw.get("responsibilities"), f"{field}.responsibilities"),
+        "workflow": text_list(raw.get("workflow"), f"{field}.workflow"),
+        "quality_gates": text_list(raw.get("quality_gates"), f"{field}.quality_gates"),
+        "route_triggers": text_list(raw.get("route_triggers"), f"{field}.route_triggers"),
+        "handoff_contract": text_list(raw.get("handoff_contract"), f"{field}.handoff_contract"),
+        "skills" if skill_mode == "unified" else "skill_purposes": role_skills,
+        "mcp": text_list(raw.get("mcp"), f"{field}.mcp"),
+        "custom_tools": text_list(raw.get("custom_tools"), f"{field}.custom_tools"),
+        "references": contract.normalize_role_aliases(
+            raw.get("references", []), f"{field}.references"
+        ),
+        "instructions": contract.normalize_role_aliases(
+            raw.get("instructions", []), f"{field}.instructions"
+        ),
+        "permission": normalize_permission(raw.get("permission"), f"{field}.permission"),
+        "permission_reason": optional_text(
+            raw.get("permission_reason"), f"{field}.permission_reason"
+        ),
+        "tools": raw.get("tools", {}),
+    }
+    if not isinstance(role["tools"], dict):
+        fail(f"{field}.tools must be a mapping")
+    for mcp_name in role["mcp"]:
+        validate_slug(mcp_name, f"{field}.mcp[]")
+    duplicate_mcp = contract.first_duplicate(role["mcp"])
+    if duplicate_mcp is not None:
+        fail(f"{field}.mcp duplicates {duplicate_mcp}")
+    return role
+
+
+def validate_role_resource_bindings(
+    raw: dict[str, Any],
+    roles: list[dict[str, Any]],
+    runtime_extensions: dict[str, Any],
+) -> None:
+    raw_roles: list[dict[str, Any]] = []
+    if raw.get("type") == "expert" and isinstance(raw.get("agent"), dict):
+        raw_roles = [raw["agent"]]
+    elif raw.get("type") == "team":
+        primary = raw.get("primary_agent")
+        subagents = raw.get("subagents")
+        if isinstance(primary, dict) and isinstance(subagents, list):
+            raw_roles = [primary, *[item for item in subagents if isinstance(item, dict)]]
+
+    references = runtime_extensions["references"]
+    if references and not any("references" in role for role in raw_roles):
+        fail(
+            "legacy package-level References require a migration preview before structural generation; "
+            "assign every Reference alias to one or more roles"
+        )
+    if any("references" in role for role in raw_roles) and not all(
+        "references" in role for role in raw_roles
+    ):
+        fail("every role must declare references in explicit binding mode")
+
+    reference_consumers = {alias: [] for alias in references}
+    instruction_consumers = {
+        alias: [] for alias in runtime_extensions["role_instructions"]
+    }
+    for role in roles:
+        for alias in role["references"]:
+            if alias not in references:
+                fail(f"{role['id']}.references references unknown Reference {alias}")
+            reference_consumers[alias].append(role["id"])
+        for alias in role["instructions"]:
+            if alias not in runtime_extensions["role_instructions"]:
+                fail(f"{role['id']}.instructions references unknown role rule {alias}")
+            instruction_consumers[alias].append(role["id"])
+
+    for alias, consumers in reference_consumers.items():
+        if not consumers:
+            fail(f"runtime_extensions.references.{alias} must be assigned to at least one role")
+        if not references[alias].get("description", "").strip():
+            print(
+                output_sanitizer.sanitize_text(
+                    f"warning: runtime_extensions.references.{alias}.description is empty; "
+                    "add a short explanation of when assigned roles should use it"
+                ),
+                file=sys.stderr,
+            )
+    for alias, consumers in instruction_consumers.items():
+        if not consumers:
+            fail(f"runtime_extensions.role_instructions.{alias} must be assigned to at least one role")
+
+    role_paths = {
+        entry["path"]
+        for entry in runtime_extensions["role_instructions"].values()
+    }
+    for pattern in runtime_extensions["instructions"]:
+        if pattern.lower().startswith("https://"):
+            continue
+        for role_path in role_paths:
+            if contract.package_glob_matches(pattern, [role_path]):
+                fail(
+                    f"runtime_extensions.instructions entry {pattern} overlaps role rule {role_path}"
+                )
+
+
+def normalize_manifest(raw: dict[str, Any], *, manifest_dir: Path | None = None) -> dict[str, Any]:
+    try:
+        manifest_contract.assert_manifest_contract(raw)
+    except contract.ContractError as exc:
+        fail(str(exc))
+    manifest_dir = (manifest_dir or Path.cwd()).resolve()
+    slug = validate_slug(raw.get("slug"), "slug")
+    expert_type = raw.get("type")
+    if expert_type not in {"expert", "team"}:
+        fail("type must be expert or team")
+    source_manifest = json.loads(json.dumps(raw, ensure_ascii=False))
+    skill_mode = skill_contract.schema_mode(raw)
+    try:
+        skill_catalog = (
+            skill_contract.normalize_catalog(raw.get("skills"))
+            if skill_mode == "unified"
+            else []
+        )
+    except contract.ContractError as exc:
+        fail(str(exc))
+
+    name = optional_text(raw.get("name"), "name", default=slug.replace("-", " ").title())
+    summary = optional_text(raw.get("summary"), "summary")
+    description = optional_text(raw.get("description"), "description")
+    if not description:
+        fail("description is required")
+    tags = text_list(raw.get("tags"), "tags")
+    quick_prompts = text_list(raw.get("quick_prompts"), "quick_prompts")
+    default_prompt = optional_text(
+        raw.get("default_prompt"),
+        "default_prompt",
+        default=quick_prompts[0] if quick_prompts else "",
+    )
+    if raw.get("default_prompt") is not None and quick_prompts and default_prompt != quick_prompts[0]:
+        fail("default_prompt must match quick_prompts[0]")
+    try:
+        common_skills = (
+            contract.common_skill_names(slug, raw.get("common_skills"))
+            if skill_mode == "legacy"
+            else []
+        )
+    except contract.ContractError as exc:
+        fail(str(exc))
+
+    if expert_type == "expert":
+        if "subagents" in raw or "primary_agent" in raw:
+            fail("type expert must use agent and must not define primary_agent or subagents")
+        raw_agent = raw.get("agent")
+        agent = normalize_role(
+            raw_agent,
+            "agent",
+            expected_mode="all",
+            default_steps=80,
+            skill_mode=skill_mode,
+        )
+        top_profession = optional_text(raw.get("profession"), "profession")
+        agent["name"] = name
+        agent["title"] = name
+        agent["display_name"] = name
+        if not isinstance(raw_agent, dict) or not raw_agent.get("profession"):
+            agent["profession"] = top_profession or name
+        source_agent = dict(raw_agent) if isinstance(raw_agent, dict) else {}
+        source_agent["name"] = name
+        source_agent["display_name"] = name
+        if not source_agent.get("profession"):
+            source_agent["profession"] = agent["profession"]
+        source_manifest["agent"] = source_agent
+        primary = agent
+        subagents: list[dict[str, Any]] = []
+    else:
+        if "agent" in raw:
+            fail("type team must use primary_agent and subagents, not agent")
+        primary = normalize_role(
+            raw.get("primary_agent"),
+            "primary_agent",
+            expected_mode="all",
+            default_steps=150,
+            skill_mode=skill_mode,
+        )
+        subagents_raw = raw.get("subagents")
+        if not isinstance(subagents_raw, list) or not subagents_raw:
+            fail("subagents must contain at least one role for type team")
+        subagent_items = cast(list[Any], subagents_raw)
+        subagents = [
+            normalize_role(
+                item,
+                f"subagents[{index}]",
+                expected_mode="subagent",
+                default_steps=50,
+                skill_mode=skill_mode,
+            )
+            for index, item in enumerate(subagent_items)
+        ]
+
+    ids = [primary["id"], *[item["id"] for item in subagents]]
+    if len(ids) != len(set(ids)):
+        fail("agent ids must be unique")
+    workflows = workflow_autonomy.normalize_workflows(
+        raw,
+        role_ids=set(ids),
+        primary_id=primary["id"],
+    )
+
+    role_skills: list[str] = []
+    if skill_mode == "legacy":
+        for role in [primary, *subagents]:
+            for purpose in role["skill_purposes"]:
+                if purpose.startswith(f"{slug}-"):
+                    fail(
+                        f"{role['id']}.skills purpose must be a purpose, not a complete skill name"
+                    )
+            role["skills"] = [
+                f"{slug}-{role['id']}-{purpose}"
+                for purpose in role.pop("skill_purposes")
+            ]
+            role_skills.extend(role["skills"])
+        for skill_name in [*common_skills, *role_skills]:
+            validate_slug(skill_name, "skill name")
+        if len([*common_skills, *role_skills]) != len(
+            set([*common_skills, *role_skills])
+        ):
+            fail("generated skill names must be unique")
+    else:
+        declared = {item["name"] for item in skill_catalog}
+        for role in [primary, *subagents]:
+            try:
+                role["skills"] = skill_contract.normalize_role_refs(
+                    role["skills"],
+                    f"{role['id']}.skills",
+                    declared=declared,
+                )
+            except contract.ContractError as exc:
+                fail(str(exc))
+            role_skills.extend(role["skills"])
+
+    mcp = normalize_mcp(raw.get("mcp_servers"))
+    runtime_extensions = normalize_runtime_extensions(
+        raw.get("runtime_extensions"),
+        slug,
+        agent_ids=set(ids),
+        execution_agent_id=primary["id"],
+    )
+    validate_role_resource_bindings(
+        raw,
+        [primary, *subagents],
+        runtime_extensions,
+    )
+    if any(
+        [
+            runtime_extensions["commands"],
+            runtime_extensions["custom_tools"],
+            runtime_extensions["plugins"]["npm"],
+            runtime_extensions["plugins"]["local"],
+            runtime_extensions["plugins"]["package_json"],
+            runtime_extensions["references"],
+            runtime_extensions["reference_files"],
+            runtime_extensions["instructions"],
+            runtime_extensions["instruction_files"],
+            runtime_extensions["role_instructions"],
+            runtime_extensions["lsp"] is not None,
+        ]
+    ):
+        source_manifest["runtime_extensions"] = runtime_extensions
+
+    source_roles: list[dict[str, Any]] = []
+    if expert_type == "expert" and isinstance(source_manifest.get("agent"), dict):
+        source_roles = [source_manifest["agent"]]
+    elif expert_type == "team":
+        source_primary = source_manifest.get("primary_agent")
+        source_subagents = source_manifest.get("subagents")
+        if isinstance(source_primary, dict) and isinstance(source_subagents, list):
+            source_roles = [
+                source_primary,
+                *[item for item in source_subagents if isinstance(item, dict)],
+            ]
+    for source_role, normalized_role in zip(source_roles, [primary, *subagents], strict=True):
+        source_role["mode"] = normalized_role["mode"]
+        source_role["autonomy"] = normalized_role["autonomy"]
+        for legacy_step_field in contract.AGENT_STEP_KEYS:
+            source_role.pop(legacy_step_field, None)
+        source_role["steps"] = normalized_role["steps"]
+        source_role["references"] = list(normalized_role["references"])
+        if runtime_extensions["role_instructions"] or "instructions" in source_role:
+            source_role["instructions"] = list(normalized_role["instructions"])
+    declared_skills = (
+        set([*common_skills, *role_skills])
+        if skill_mode == "legacy"
+        else {item["name"] for item in skill_catalog}
+    )
+    package_resources, package_resource_assets = normalize_package_resources(
+        raw.get("package_resources"),
+        declared_skills=declared_skills,
+        manifest_dir=manifest_dir,
+        skill_mode=skill_mode,
+    )
+    if skill_mode == "unified":
+        declared_paths = {item["path"] for item in package_resources}
+        for skill_name in sorted(declared_skills):
+            required = f"{EXPERT_DIR}/{SKILLS_SUBDIR}/{skill_name}/SKILL.md"
+            if required not in declared_paths:
+                fail(
+                    f"skills.{skill_name}: package_resources must declare {required}"
+                )
+        source_manifest["skills"] = skill_catalog
+    if package_resources:
+        source_manifest["package_resources"] = package_resources
+    else:
+        source_manifest.pop("package_resources", None)
+    for role in [primary, *subagents]:
+        for name_ in role["mcp"]:
+            if name_ not in mcp:
+                fail(f"agent {role['id']} references unknown mcp server {name_}")
+        role["allowed_skills"] = (
+            [*common_skills, *role["skills"]]
+            if skill_mode == "legacy"
+            else list(role["skills"])
+        )
+        explicit_skill_permission = role["permission"].get("skill")
+        if skill_mode == "unified" and explicit_skill_permission is not None:
+            fail(
+                f"{role['id']}.permission.skill is derived from role skills and must be omitted"
+            )
+        if explicit_skill_permission is not None:
+            if not isinstance(explicit_skill_permission, dict):
+                fail(f"{role['id']}.permission.skill must be a mapping")
+            for skill_name in explicit_skill_permission:
+                if skill_name != "*" and skill_name not in role["allowed_skills"]:
+                    fail(
+                        f"{role['id']}.permission.skill references undeclared skill {skill_name}"
+                    )
+        role["permission"], role["permission_audit"] = build_role_permission(
+            role,
+            workflows=workflows,
+            manifest_mode=skill_mode,
+            mcp_names=list(mcp.keys()),
+            custom_tool_paths=[item["path"] for item in runtime_extensions["custom_tools"]],
+            subagent_ids=[item["id"] for item in subagents],
+            is_primary=role["id"] == primary["id"],
+        )
+
+    return {
+        "slug": slug,
+        "type": expert_type,
+        "version": raw.get("version"),
+        "name": name,
+        "summary": summary,
+        "description": description,
+        "language": optional_text(raw.get("language"), "language", default="zh"),
+        "avatar_url": validate_avatar_url(raw.get("avatar_url"), "avatar_url"),
+        "tags": tags,
+        "quick_prompts": quick_prompts,
+        "default_prompt": default_prompt,
+        "profession": optional_text(raw.get("profession"), "profession"),
+        "category_id": optional_text(raw.get("category_id"), "category_id"),
+        "display_description": optional_text(raw.get("display_description"), "display_description", default=description),
+        "workflows": workflows,
+        "primary_agent": primary,
+        "subagents": subagents,
+        "skill_mode": skill_mode,
+        "skill_catalog": skill_catalog,
+        "common_skills": common_skills,
+        "role_skills": role_skills,
+        "mcp": mcp,
+        "runtime_extensions": runtime_extensions,
+        "package_resources": package_resources,
+        "package_resource_assets": package_resource_assets,
+        "source_manifest": source_manifest,
+    }
+
+
+def bullet_list(items: list[str], fallback: str) -> str:
+    values = items or [fallback]
+    return "\n".join(f"- {item}" for item in values)
+
+
+def build_role_permission(
+    role: dict[str, Any],
+    *,
+    workflows: list[dict[str, Any]],
+    manifest_mode: str,
+    mcp_names: list[str],
+    custom_tool_paths: list[str],
+    subagent_ids: list[str],
+    is_primary: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        return permission_policy.build_role_permission(
+            role,
+            workflows=workflows,
+            manifest_mode=manifest_mode,
+            mcp_names=mcp_names,
+            custom_tool_paths=custom_tool_paths,
+            subagent_ids=subagent_ids,
+            is_primary=is_primary,
+            legacy_tools_permission=permission_policy.tools_to_permission(
+                role["tools"], f"{role['id']}.tools"
+            ),
+        )
+    except permission_policy.PermissionPolicyError as exc:
+        fail(f"{role['id']}: {exc}")
+
+
+def role_skill_lines(role: dict[str, Any]) -> str:
+    if not role["allowed_skills"]:
+        return "- 当前角色未分配包内业务 Skill。"
+    return "\n".join(
+        f"- `/{skill}` and load/use skill `{skill}`"
+        for skill in role["allowed_skills"]
+    )
+
+
+def role_instruction_content(manifest: dict[str, Any], path: str) -> str:
+    for item in manifest["runtime_extensions"]["instruction_files"]:
+        if item["path"] == path:
+            return item["content"]
+    fail(f"role instruction {path} has no backing content")
+
+
+def render_role_resources(role: dict[str, Any], manifest: dict[str, Any]) -> str:
+    ext = manifest["runtime_extensions"]
+    lines = ["## 分配资料与规则"]
+    if not role["custom_tools"] and not role["references"] and not role["instructions"]:
+        lines.append("\n当前角色没有分配额外工具、资料或角色规则。")
+        return "\n".join(lines)
+
+    if role["custom_tools"]:
+        lines.append("\n### 主动调用的 Custom Tool")
+        lines.append("只在确认职责内主动调用；共享所有权不表示自动触发。")
+        for path in role["custom_tools"]:
+            tool_name = Path(path).stem
+            tool = next(
+                item for item in ext["custom_tools"] if item["path"] == path
+            )
+            lines.append(
+                f"- `{tool_name}`（`.opencode/tools/{path}`）："
+                f"{tool['purpose']}"
+            )
+
+    if role["references"]:
+        lines.append("\n### 工作资料")
+        lines.append(
+            "只在当前任务需要时查阅。这里的角色分配用于说明使用责任，不代表其他角色在系统层面无法看到根级 Reference。"
+        )
+        for alias in role["references"]:
+            entry = ext["references"][alias]
+            description = entry.get("description") or "按任务上下文判断是否需要查阅"
+            namespaced = contract.namespaced_reference_alias(manifest["slug"], alias)
+            if "repository" in entry:
+                branch = f"，ref `{entry['branch']}`" if entry.get("branch") else "，使用仓库默认分支"
+                source = f"Git `{entry['repository']}`{branch}"
+                fallback = "目标 Runtime 不支持 Reference 时停止并报告，不自行拉取仓库。"
+            else:
+                source = f"本地目录 `{entry['path']}`"
+                fallback_name = contract.reference_fallback_skill_name(manifest["slug"], alias)
+                fallback = f"原生 Reference 不可用时加载兼容能力包 `{fallback_name}`。"
+            lines.append(
+                f"- `{namespaced}`：{description}；来源：{source}。{fallback}"
+            )
+
+    if role["instructions"]:
+        lines.append("\n### 始终遵守的专家包规则")
+        for alias in role["instructions"]:
+            entry = ext["role_instructions"][alias]
+            description = entry.get("description")
+            lines.append(f"\n#### `{alias}`")
+            if description:
+                lines.append(f"\n适用说明：{description}")
+            lines.append("\n" + role_instruction_content(manifest, entry["path"]).strip())
+    return "\n".join(lines)
+
+
+def render_team_roster(manifest: dict[str, Any]) -> str:
+    rows: list[str] = []
+    for role in [manifest["primary_agent"], *manifest["subagents"]]:
+        responsibility = role["responsibilities"][0] if role["responsibilities"] else role["description"]
+        rows.append(f"- `{role['id']}`（{role['display_name']}）：{responsibility}")
+    return "\n".join(rows)
+
+
+def render_direct_routing_table(manifest: dict[str, Any]) -> str:
+    rows: list[str] = []
+    for role in manifest["subagents"]:
+        trigger = role["route_triggers"][0] if role["route_triggers"] else role["description"]
+        rows.append(f"- {trigger} → `{role['id']}`（{role['profession']}）")
+    if not rows:
+        rows.append("- 单专家任务 → 专家 agent")
+    return "\n".join(rows)
+
+
+def render_subagent_naming(manifest: dict[str, Any]) -> str:
+    if not manifest["subagents"]:
+        return "- none"
+    return "\n".join(
+        f"- `subagent_type: \"{role['id']}\"`"
+        for role in manifest["subagents"]
+    )
+
+
+def render_workflows(manifest: dict[str, Any]) -> str:
+    workflows = manifest["workflows"]
+    if not workflows:
+        return bullet_list(
+            manifest["primary_agent"]["workflow"],
+            "澄清范围、分派团员、整合产出，并按验收标准完成验证。",
+        )
+    return workflow_autonomy.render_all_workflows(workflows)
+
+
+def render_role_workflow(role: dict[str, Any], manifest: dict[str, Any], fallback: str) -> str:
+    if workflow_autonomy.has_autonomy_contract(manifest["workflows"]):
+        projection = workflow_autonomy.render_role_workflows(
+            manifest["workflows"],
+            role["id"],
+        )
+        if projection:
+            return projection
+    return bullet_list(role["workflow"], fallback)
+
+
+def render_primary_workflows(manifest: dict[str, Any]) -> str:
+    rendered = render_workflows(manifest)
+    if manifest["type"] == "team" and workflow_autonomy.has_autonomy_contract(
+        manifest["workflows"]
+    ):
+        rendered += (
+            "\n\n### 自主度委派合同\n\n"
+            "调用 `task` 委派当前 phase 时，prompt 必须包含该 Agent 的生效自主度、"
+            "允许执行器、执行标准、验收标准和证据要求；不得只转发业务目标。"
+        )
+    return rendered
+
+
+def render_role_triggers(role: dict[str, Any]) -> str:
+    return bullet_list(role["route_triggers"], role["description"])
+
+
+def render_handoff_contract(role: dict[str, Any]) -> str:
+    return bullet_list(
+        role["handoff_contract"],
+        "返回任务理解、完成结果、证据、验收状态、失败标准和剩余风险。",
+    )
+
+
+def compact_description(parts: list[str], *, limit: int = 1024) -> str:
+    text = " ".join(part.strip() for part in parts if part and part.strip())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def agent_trigger_items(
+    role: dict[str, Any],
+    manifest: dict[str, Any],
+    *,
+    is_primary: bool,
+) -> list[str]:
+    items: list[str] = []
+    items.extend(role["route_triggers"])
+    if manifest["type"] == "expert":
+        items.extend(manifest["quick_prompts"])
+    elif is_primary:
+        items.extend(
+            workflow["trigger"]
+            for workflow in manifest["workflows"]
+            if workflow["trigger"]
+        )
+        items.extend(manifest["quick_prompts"])
+    deduplicated: list[str] = []
+    for item in items:
+        cleaned = item.strip()
+        if cleaned and cleaned not in deduplicated:
+            deduplicated.append(cleaned)
+    return deduplicated
+
+
+def render_agent_description(
+    role: dict[str, Any],
+    manifest: dict[str, Any],
+    *,
+    is_primary: bool,
+) -> str:
+    triggers = agent_trigger_items(role, manifest, is_primary=is_primary)
+    if manifest["type"] == "expert":
+        prefix = "当用户需要以下能力时使用："
+    elif is_primary:
+        prefix = "当请求需要跨角色编排、验收或最终集成时使用："
+    else:
+        prefix = "由团长在以下场景委派："
+    trigger_text = "；".join(triggers[:3]) if triggers else role["description"]
+    return compact_description([role["description"], f"{prefix}{trigger_text}"])
+
+
+def render_trigger_examples(
+    role: dict[str, Any],
+    manifest: dict[str, Any],
+    *,
+    is_primary: bool,
+) -> str:
+    triggers = agent_trigger_items(role, manifest, is_primary=is_primary)
+    if not triggers:
+        triggers = [role["description"]]
+    return "\n".join(f"- {item}" for item in triggers[:4])
+
+
+def render_edge_case_guidance(manifest: dict[str, Any], *, is_primary: bool) -> str:
+    lines = [
+        "- 输入、工具或依赖不足时停止，报告已验证事实、受影响验收和最少补充信息。",
+        "- 验证失败不得宣称完成；先修复、返工或记录阻塞与风险。",
+    ]
+    if manifest["type"] == "team" and is_primary:
+        lines.append("- 团员未通过时用原 `task_id` 返工，不另开任务。")
+    elif manifest["type"] == "team":
+        lines.append("- 越界时停止并把建议路由对象回传团长。")
+    else:
+        lines.append("- 请求超出本专家职责时明确边界，不模拟不存在的团队或专业能力。")
+    return "\n".join(lines)
+
+
+def render_agent(role: dict[str, Any], manifest: dict[str, Any], *, is_primary: bool) -> str:
+    generated_description = render_agent_description(
+        role,
+        manifest,
+        is_primary=is_primary,
+    )
+    frontmatter = {
+        "name": role["id"],
+        "description": generated_description,
+        "displayName": {"en": role["display_name"], "zh": role["display_name"]},
+        "profession": {"en": role["profession"], "zh": role["profession"]},
+        "steps": role["steps"],
+        "mode": role["mode"],
+        "color": role["color"],
+        "permission": role["permission"],
+    }
+    for key in contract.AGENT_OPTIONAL_RUNTIME_KEYS:
+        if key in role:
+            frontmatter[key] = role[key]
+    if role["avatar_url"]:
+        frontmatter["avatar_url"] = role["avatar_url"]
+
+    if manifest["type"] == "expert":
+        body = renderers.render_spec("expert-agent",
+            agent_id=role["id"],
+            title=role["title"],
+            expert_name=manifest["name"],
+            description=manifest["description"],
+            display_name=role["display_name"],
+            profession=role["profession"],
+            default_prompt=manifest["default_prompt"] or "none",
+            allowed_skills=role_skill_lines(role),
+            role_resources=render_role_resources(role, manifest),
+            route_triggers=render_role_triggers(role),
+            trigger_examples=render_trigger_examples(role, manifest, is_primary=True),
+            edge_case_guidance=render_edge_case_guidance(manifest, is_primary=True),
+            handoff_contract=render_handoff_contract(role),
+            responsibilities=bullet_list(role["responsibilities"], role["description"]),
+            workflow=(
+                render_workflows(manifest)
+                if workflow_autonomy.has_autonomy_contract(manifest["workflows"])
+                else bullet_list(
+                    role["workflow"],
+                    "Clarify the request, produce the expert output, and verify it.",
+                )
+            ),
+            quality_gates=bullet_list(
+                role["quality_gates"],
+                "Before completion, verify artifacts, cite evidence, and record unresolved risk.",
+            ),
+        )
+    elif is_primary:
+        subagent_calls = "\n".join(
+            f"- 调用 `task(subagent_type=\"{sub['id']}\")`：{sub['description']}"
+            for sub in manifest["subagents"]
+        )
+        body = renderers.render_spec("primary-agent",
+            agent_id=role["id"],
+            team_slug=manifest["slug"],
+            title=role["title"],
+            expert_name=manifest["name"],
+            description=manifest["description"],
+            display_name=role["display_name"],
+            profession=role["profession"],
+            default_prompt=manifest["default_prompt"] or "none",
+            allowed_skills=role_skill_lines(role),
+            role_resources=render_role_resources(role, manifest),
+            team_roster=render_team_roster(manifest),
+            direct_routes=render_direct_routing_table(manifest),
+            workflows=render_primary_workflows(manifest),
+            subagent_calls=subagent_calls,
+            subagent_naming=render_subagent_naming(manifest),
+            trigger_examples=render_trigger_examples(role, manifest, is_primary=True),
+            edge_case_guidance=render_edge_case_guidance(manifest, is_primary=True),
+            handoff_contract=render_handoff_contract(role),
+            quality_gates=bullet_list(
+                role["quality_gates"],
+                "Before completion, verify artifacts, cite evidence, and record unresolved risk.",
+            ),
+        )
+    else:
+        body = renderers.render_spec("subagent",
+            agent_id=role["id"],
+            title=role["title"],
+            expert_name=manifest["name"],
+            description=manifest["description"],
+            display_name=role["display_name"],
+            profession=role["profession"],
+            allowed_skills=role_skill_lines(role),
+            role_resources=render_role_resources(role, manifest),
+            route_triggers=render_role_triggers(role),
+            trigger_examples=render_trigger_examples(role, manifest, is_primary=False),
+            edge_case_guidance=render_edge_case_guidance(manifest, is_primary=False),
+            handoff_contract=render_handoff_contract(role),
+            responsibilities=bullet_list(role["responsibilities"], role["description"]),
+            workflow=render_role_workflow(
+                role,
+                manifest,
+                "Receive the assignment, execute your role-specific work, and report verification evidence.",
+            ),
+            quality_gates=bullet_list(
+                role["quality_gates"],
+                "Return findings, files touched, verification status, and open risks.",
+            ),
+        )
+    return renderers.render_frontmatter(frontmatter, body)
+
+
+def skill_resource_paths(manifest: dict[str, Any], skill_name: str) -> list[str]:
+    prefix = f"{EXPERT_DIR}/{SKILLS_SUBDIR}/{skill_name}/"
+    paths: list[str] = []
+    for item in manifest["package_resources"]:
+        path = item["path"]
+        if path.startswith(prefix):
+            paths.append(path[len(prefix) :])
+    return sorted(paths)
+
+
+def render_skill_resource_navigation(manifest: dict[str, Any], skill_name: str) -> str:
+    paths = skill_resource_paths(manifest, skill_name)
+    if not paths:
+        return "- 当前没有声明额外资源。只使用本 SKILL.md 中的流程，不要假设存在 scripts、references 或 templates。"
+    lines: list[str] = []
+    for path in paths:
+        category = Path(path).parts[0] if Path(path).parts else "resource"
+        if category == "scripts":
+            guidance = "需要确定性执行时使用；先确认参数、输入、输出和 workspace 边界。"
+        elif category == "references":
+            guidance = "仅在当前任务需要该领域资料时读取，不要一次性加载全部 reference。"
+        elif category in {"assets", "templates"}:
+            guidance = "生成交付物时按需复制或改写，不把二进制/模板全文加载为说明。"
+        elif category == "examples":
+            guidance = "需要确认格式或边界时读取，并根据当前任务调整。"
+        else:
+            guidance = "仅在当前任务明确需要时读取或使用。"
+        lines.append(f"- `{path}`：{guidance}")
+    return "\n".join(lines)
+
+
+def render_common_skill_description(manifest: dict[str, Any]) -> str:
+    examples = "；".join(manifest["quick_prompts"][:2])
+    return compact_description(
+        [
+            f"当 `{manifest['name']}` 的 agent 需要统一任务澄清、证据、验证和交付格式时使用。",
+            f"典型请求：{examples}" if examples else "适用于本包的所有正式交付。",
+        ]
+    )
+
+
+def render_role_skill_description(role: dict[str, Any], manifest: dict[str, Any]) -> str:
+    triggers = agent_trigger_items(
+        role,
+        manifest,
+        is_primary=role["id"] == manifest["primary_agent"]["id"],
+    )
+    trigger_text = "；".join(triggers[:3]) if triggers else role["description"]
+    return compact_description(
+        [
+            f"当 `{manifest['name']}` 的 `{role['display_name']}` 需要执行角色方法、输出合同和质量门控时使用。",
+            f"触发场景：{trigger_text}",
+        ]
+    )
+
+
+def render_skill(
+    skill_name: str,
+    description: str,
+    content: str,
+    *,
+    metadata: dict[str, str],
+) -> str:
+    try:
+        renderers.validate_skill_description(skill_name, description)
+    except ValueError as exc:
+        fail(str(exc))
+    frontmatter = {
+        "name": skill_name,
+        "description": description,
+        "compatibility": "opencode",
+        "metadata": metadata,
+    }
+    issues = skill_contract.validate_skill_frontmatter(
+        frontmatter,
+        directory_name=skill_name,
+        expected_compatibility="opencode",
+    )
+    errors = [issue.message for issue in issues if issue.severity == "error"]
+    if errors:
+        fail(f"skill {skill_name} frontmatter is invalid: {'; '.join(errors)}")
+    return renderers.render_frontmatter(frontmatter, content)
+
+
+def render_command(command: dict[str, Any]) -> str:
+    frontmatter: dict[str, Any] = {}
+    if command["description"]:
+        frontmatter["description"] = command["description"]
+    for key in ["agent", "subtask", "model"]:
+        if key in command:
+            frontmatter[key] = command[key]
+    return renderers.render_frontmatter(frontmatter, command["template"])
+
+
+def render_generated_workflow_command(
+    workflow: dict[str, Any],
+    manifest: dict[str, Any],
+) -> str:
+    command = workflow["command"]
+    if command is None:
+        fail(f"workflow {workflow['name']} does not declare a command")
+    return renderers.render_frontmatter(
+        {
+            "description": workflow_autonomy.workflow_command_description(workflow),
+            "agent": manifest["primary_agent"]["id"],
+            "subtask": contract.expert_runtime_projection_policy()["command"][
+                "subtask"
+            ],
+        },
+        workflow_autonomy.render_workflow_command(workflow),
+    )
+
+
+def workflow_commands(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        workflow
+        for workflow in manifest["workflows"]
+        if workflow["contract_enabled"] and workflow["command"] is not None
+    ]
+
+
+def runtime_extensions_config(manifest: dict[str, Any]) -> dict[str, Any]:
+    ext = manifest["runtime_extensions"]
+    config: dict[str, Any] = {}
+    if ext["plugins"]["npm"]:
+        config["plugin"] = ext["plugins"]["npm"]
+    if ext["references"]:
+        config["references"] = {
+            contract.namespaced_reference_alias(manifest["slug"], alias): entry
+            for alias, entry in ext["references"].items()
+        }
+    if ext["instructions"]:
+        config["instructions"] = ext["instructions"]
+    if ext["lsp"] is not None:
+        config["lsp"] = ext["lsp"]
+    return config
+
+
+def runtime_agent_config(
+    role: dict[str, Any],
+    manifest: dict[str, Any],
+    *,
+    is_primary: bool,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "mode": role["mode"],
+        "description": render_agent_description(role, manifest, is_primary=is_primary),
+        "steps": role["steps"],
+    }
+    for key in contract.AGENT_OPTIONAL_RUNTIME_KEYS:
+        if key in role:
+            result[key] = role[key]
+    result["permission"] = role["permission"]
+    return result
+
+
+def render_runtime_config(manifest: dict[str, Any]) -> dict[str, Any]:
+    primary = manifest["primary_agent"]
+    subagents = manifest["subagents"]
+    config: dict[str, Any] = {
+        "$schema": contract.OPENCODE_SCHEMA,
+        "agent": {},
+    }
+    if manifest["mcp"]:
+        config["mcp"] = manifest["mcp"]
+    config.update(runtime_extensions_config(manifest))
+    config["agent"][primary["id"]] = runtime_agent_config(
+        primary,
+        manifest,
+        is_primary=True,
+    )
+    for sub in subagents:
+        config["agent"][sub["id"]] = runtime_agent_config(
+            sub,
+            manifest,
+            is_primary=False,
+        )
+    return config
+
+
+def role_summary(role: dict[str, Any]) -> str:
+    return role["responsibilities"][0] if role["responsibilities"] else role["description"]
+
+
+def render_readme_type(manifest: dict[str, Any]) -> str:
+    if manifest["type"] == "team":
+        total = 1 + len(manifest["subagents"])
+        return f"Team 型（{total} 人专家团：1 位团长 + {len(manifest['subagents'])} 位团员）"
+    return "单专家型（1 位专家 agent）"
+
+
+def render_readme_feature_summary(manifest: dict[str, Any]) -> str:
+    lines = [manifest["description"]]
+    if manifest["summary"]:
+        lines.append(f"\n定位摘要：{manifest['summary']}")
+    if manifest["tags"]:
+        lines.append("\n标签：" + "、".join(manifest["tags"]))
+    if manifest["profession"]:
+        lines.append(f"\n专业定位：{manifest['profession']}")
+    return "\n".join(lines)
+
+
+def render_readme_roles_section(manifest: dict[str, Any]) -> tuple[str, str]:
+    if manifest["type"] == "team":
+        rows = ["| 角色 | Agent ID | 名称 | 职责 |", "|---|---|---|---|"]
+        primary = manifest["primary_agent"]
+        rows.append(
+            f"| 团长 | `{primary['id']}` | {primary['display_name']} · {primary['profession']} | {role_summary(primary)} |"
+        )
+        for role in manifest["subagents"]:
+            rows.append(
+                f"| 团员 | `{role['id']}` | {role['display_name']} · {role['profession']} | {role_summary(role)} |"
+            )
+        return "团队角色", "\n".join(rows)
+
+    role = manifest["primary_agent"]
+    lines = [
+        "| 项目 | 内容 |",
+        "|---|---|",
+        f"| Agent ID | `{role['id']}` |",
+        f"| 名称 | {role['display_name']} |",
+        f"| 专业定位 | {role['profession']} |",
+        f"| 核心职责 | {role_summary(role)} |",
+    ]
+    if role["route_triggers"]:
+        lines.append(f"| 触发场景 | {'；'.join(role['route_triggers'])} |")
+    return "专家能力", "\n".join(lines)
+
+
+def render_readme_skills(manifest: dict[str, Any]) -> str:
+    if manifest["skill_mode"] == "unified":
+        rows = ["| 技能 | 来源 | 编辑策略 | 分配角色 |", "|---|---|---|---|"]
+        roles = [manifest["primary_agent"], *manifest["subagents"]]
+        for item in manifest["skill_catalog"]:
+            assigned = [
+                f"`{role['id']}`"
+                for role in roles
+                if item["name"] in role["skills"]
+            ]
+            rows.append(
+                f"| `{item['name']}` | `{item['origin']}` | "
+                f"`{item['edit_policy']}` | {', '.join(assigned) or '未分配'} |"
+            )
+        if not manifest["skill_catalog"]:
+            rows.append("| 无 | — | — | — |")
+        return "\n".join(rows)
+    rows = ["| 技能 | 用途 |", "|---|---|"]
+    for skill_name in manifest["common_skills"]:
+        rows.append(f"| `{skill_name}` | 通用工作方法、交付格式和质量门控 |")
+    for role in [manifest["primary_agent"], *manifest["subagents"]]:
+        for skill_name in role["skills"]:
+            rows.append(f"| `{skill_name}` | `{role['id']}` 的专用技能 |")
+    return "\n".join(rows)
+
+
+def render_runtime_extensions_summary(manifest: dict[str, Any]) -> str:
+    ext = manifest["runtime_extensions"]
+    rows = ["| 能力 | 生成位置 / 配置字段 | 状态 |", "|---|---|---|"]
+    total_commands = len(ext["commands"]) + len(workflow_commands(manifest))
+    rows.append(f"| 自定义命令 | `.opencode/commands/` | {total_commands} 个 |")
+    rows.append(f"| 自定义工具 | `.opencode/tools/` | {len(ext['custom_tools'])} 个 |")
+    local_plugins = len(ext["plugins"]["local"])
+    npm_plugins = len(ext["plugins"]["npm"])
+    rows.append(f"| 插件 | `.opencode/plugins/` / `opencode.json.plugin` | 本地 {local_plugins} 个，npm {npm_plugins} 个 |")
+    rows.append(f"| References | `.opencode/references/` / `opencode.json.references` | {len(ext['references'])} 个别名 |")
+    rows.append(f"| 自定义指令 | `.opencode/instructions/` / `opencode.json.instructions` | {len(ext['instructions'])} 条 |")
+    rows.append(f"| 角色规则 | Agent Markdown | {len(ext['role_instructions'])} 条 |")
+    rows.append(f"| LSP | `opencode.json.lsp` | {'已配置' if ext['lsp'] is not None else '未配置'} |")
+    if not manifest["mcp"]:
+        rows.append("| MCP | `opencode.json.mcp` | 未配置 |")
+    else:
+        rows.append(f"| MCP | `opencode.json.mcp` | {len(manifest['mcp'])} 个 |")
+    return "\n".join(rows)
+
+
+def render_agent_runtime_summary(manifest: dict[str, Any]) -> str:
+    rows = [
+        "| Agent | steps | model | variant | hidden | options |",
+        "|---|---:|---|---|---|---|",
+    ]
+    for role in [manifest["primary_agent"], *manifest["subagents"]]:
+        options = role.get("options")
+        option_keys = (
+            "、".join(f"`{key}`" for key in sorted(options))
+            if isinstance(options, dict)
+            else "继承"
+        )
+        hidden = "是" if role.get("hidden") is True else "否" if "hidden" in role else "未声明"
+        values = [
+            f"`{role['id']}`",
+            str(role["steps"]),
+            f"`{role['model']}`" if "model" in role else "继承",
+            f"`{role['variant']}`" if "variant" in role else "继承",
+            hidden,
+            option_keys,
+        ]
+        rows.append("| " + " | ".join(values) + " |")
+    return "\n".join(rows)
+
+
+def render_permission_summary(manifest: dict[str, Any]) -> str:
+    rows = [
+        "| Agent | 角色自主度 | 内部值 | 来源 | `*` | edit | bash | webfetch | external_directory | doom_loop | 外部 Skill |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for role in [manifest["primary_agent"], *manifest["subagents"]]:
+        permission = role["permission"]
+        audit = role["permission_audit"]
+        bash = permission.get("bash")
+        bash_action = bash.get("*") if isinstance(bash, dict) else bash
+        external = permission.get("external_directory")
+        external_action = external.get("*") if isinstance(external, dict) else external
+        skill_permission = permission.get("skill")
+        external_skill_action = (
+            skill_permission.get("*") if isinstance(skill_permission, dict) else "deny"
+        )
+        rows.append(
+            "| "
+            + " | ".join(
+                [
+                    f"`{role['id']}`",
+                    audit["label"],
+                    f"`{audit['effective']}`",
+                    audit["source"],
+                    str(permission.get("*", "legacy")),
+                    str(permission.get("edit", "继承")),
+                    str(bash_action or "继承"),
+                    str(permission.get("webfetch", "继承")),
+                    str(external_action or "继承"),
+                    str(permission.get("doom_loop", "继承")),
+                    str(external_skill_action),
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(rows)
+
+
+def render_readme_runtime_extensions(manifest: dict[str, Any]) -> str:
+    rows = [
+        render_runtime_extensions_summary(manifest),
+        "\n### Agent 运行参数",
+        render_agent_runtime_summary(manifest),
+        "\n未声明的可选参数继承 OpenCode、模型或 provider 默认值。",
+        "\n### Agent 权限基线",
+        render_permission_summary(manifest),
+    ]
+    if manifest["mcp"]:
+        rows.append("\n### MCP")
+        rows.append("| MCP | 类型 | 启用状态 |")
+        rows.append("|---|---|---|")
+        for name, entry in manifest["mcp"].items():
+            rows.append(f"| `{name}` | {entry.get('type', 'unknown')} | {entry.get('enabled', False)} |")
+    else:
+        rows.append("\n未在 `expert.json` 中配置 MCP，因此生成的 MobileWork 运行时配置文件不包含 MCP 占位。")
+    ext = manifest["runtime_extensions"]
+    generated_commands = workflow_commands(manifest)
+    if ext["commands"] or generated_commands:
+        rows.append("\n### 自定义命令")
+        rows.extend(
+            f"- `/{workflow['command']['name']}`：{workflow['command']['description']}（由 workflow 合同生成）"
+            for workflow in generated_commands
+        )
+        rows.extend(f"- `/{command['name']}`：{command['description'] or '自定义工作流命令'}" for command in ext["commands"])
+    if ext["custom_tools"]:
+        rows.append("\n### 自定义工具")
+        roles = [manifest["primary_agent"], *manifest["subagents"]]
+        for item in ext["custom_tools"]:
+            consumers = [
+                role["id"] for role in roles if item["path"] in role["custom_tools"]
+            ]
+            consumer_text = (
+                ", ".join(f"`{role_id}`" for role_id in consumers)
+                if consumers
+                else "未分配"
+            )
+            rows.append(
+                f"- `.opencode/tools/{item['path']}`：{item['purpose']}；使用角色 "
+                + consumer_text
+            )
+    if ext["plugins"]["npm"] or ext["plugins"]["local"]:
+        rows.append("\n### 插件")
+        rows.append(
+            "Plugin 是 package-wide 运行行为，供满足 capability contract 的目标 "
+            "Runtime 发现并加载；它不属于任何单一角色，也不得写成角色私有能力。"
+        )
+        rows.append(
+            "本包的生成与静态校验不证明 Plugin 已被真实 Runtime 加载；"
+            "没有实际加载证据时，Runtime 状态保持 `not-tested`。"
+        )
+        rows.extend(f"- npm：`{item}`" for item in ext["plugins"]["npm"])
+        rows.extend(f"- 本地：`.opencode/plugins/{item['path']}`" for item in ext["plugins"]["local"])
+    if ext["references"]:
+        rows.append("\n### References")
+        roles = [manifest["primary_agent"], *manifest["subagents"]]
+        for name in ext["references"]:
+            consumers = [role["id"] for role in roles if name in role["references"]]
+            rows.append(f"- `{name}`：使用角色 {', '.join(f'`{item}`' for item in consumers)}")
+    if ext["instructions"]:
+        rows.append("\n### 自定义指令")
+        rows.extend(f"- `{item}`" for item in ext["instructions"])
+    if ext["role_instructions"]:
+        rows.append("\n### 角色规则")
+        roles = [manifest["primary_agent"], *manifest["subagents"]]
+        for name in ext["role_instructions"]:
+            consumers = [role["id"] for role in roles if name in role["instructions"]]
+            rows.append(f"- `{name}`：使用角色 {', '.join(f'`{item}`' for item in consumers)}")
+    rows.append("\n凭证请使用环境变量或密钥管理器，不要把真实 token、API key 或私有 endpoint 写入包文件。")
+    return "\n".join(rows)
+
+
+def render_readme_mcp_note(manifest: dict[str, Any]) -> str:
+    return render_readme_runtime_extensions(manifest)
+
+
+def render_settings_summary(manifest: dict[str, Any]) -> str:
+    names = contract.extract_env_references(render_runtime_config(manifest))
+    if not names:
+        return (
+            "当前生成配置不引用环境变量，因此包根目录不生成 `.env.example`。"
+            "如后续增加凭证或可配置值，请在 `expert.json` 的现有 OpenCode 配置字段中使用 `{env:VARIABLE}`。"
+        )
+    lines = [
+        "运行前在 MobileWork/OpenCode 进程环境中提供以下变量；包内 `.env.example` 只记录名称和占位值，不会自动注入配置："
+    ]
+    lines.extend(f"- `{name}`" for name in names)
+    return "\n".join(lines)
+
+
+def write_text_file(base: Path, relative_path: str, content: str, *, ensure_newline: bool = True) -> None:
+    target = base / validate_package_file_path(relative_path, "runtime extension path")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    rendered = content if not ensure_newline or content.endswith("\n") else content + "\n"
+    target.write_bytes(rendered.encode("utf-8"))
+
+
+def write_runtime_extensions(project_dir: Path, manifest: dict[str, Any]) -> None:
+    ext = manifest["runtime_extensions"]
+    package_runtime_dir = project_dir / EXPERT_DIR
+    for workflow in workflow_commands(manifest):
+        write_text_file(
+            package_runtime_dir / COMMANDS_SUBDIR,
+            f"{workflow['command']['name']}.md",
+            render_generated_workflow_command(workflow, manifest),
+        )
+    for command in ext["commands"]:
+        write_text_file(
+            package_runtime_dir / COMMANDS_SUBDIR,
+            f"{command['name']}.md",
+            render_command(command),
+        )
+    for item in ext["custom_tools"]:
+        write_text_file(package_runtime_dir / TOOLS_SUBDIR, item["path"], item["content"])
+    for item in ext["plugins"]["local"]:
+        write_text_file(package_runtime_dir / PLUGINS_SUBDIR, item["path"], item["content"])
+    if ext["plugins"]["package_json"]:
+        (package_runtime_dir / "package.json").write_text(
+            json.dumps(ext["plugins"]["package_json"], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    for item in ext["reference_files"]:
+        write_text_file(project_dir, item["path"], item["content"], ensure_newline=False)
+    for item in ext["instruction_files"]:
+        write_text_file(project_dir, item["path"], item["content"], ensure_newline=False)
+
+
+def write_package_resources(project_dir: Path, manifest: dict[str, Any]) -> None:
+    for relative_path, content in manifest["package_resource_assets"].items():
+        target = project_dir / validate_package_file_path(relative_path, "package_resources path")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+
+
+def render_readme_legacy_mcp_note(manifest: dict[str, Any]) -> str:
+    if not manifest["mcp"]:
+        return "未在 `expert.json` 中配置 MCP，因此生成的 MobileWork 运行时配置文件不包含 MCP 占位。"
+    rows = ["| MCP | 类型 | 启用状态 |", "|---|---|---|"]
+    for name, entry in manifest["mcp"].items():
+        rows.append(f"| `{name}` | {entry.get('type', 'unknown')} | {entry.get('enabled', False)} |")
+    rows.append("\n凭证请使用环境变量或密钥管理器，不要把真实 token、API key 或私有 endpoint 写入包文件。")
+    return "\n".join(rows)
+
+
+def render_readme_notes(manifest: dict[str, Any]) -> str:
+    if manifest["type"] == "team":
+        return "\n".join(
+            [
+                "- 团长通过 `task.subagent_type` 调度团员，并保存 `task_id` 用于返工。",
+                "- 团员专业产出必须来自对应 `task` 结果，团长不要代写团员结论。",
+                "- 并行阶段只适用于输入输出独立、无共享写入冲突且验收标准可分别检查的分支。",
+            ]
+        )
+    return "\n".join(
+        [
+            "- 这是单专家包，不调用 `task` 调度 subagent。",
+            "- 专家需要直接完成工作流，并在最终输出中说明证据、验证状态和剩余风险。",
+        ]
+    )
+
+
+def render_readme(manifest: dict[str, Any]) -> str:
+    roles_heading, roles_content = render_readme_roles_section(manifest)
+    return renderers.render_spec("readme",
+        expert_name=manifest["name"],
+        display_description=manifest["display_description"] or manifest["description"],
+        type_label=render_readme_type(manifest),
+        feature_summary=render_readme_feature_summary(manifest),
+        roles_heading=roles_heading,
+        roles_content=roles_content,
+        workflow=render_workflows(manifest),
+        skills_table=render_readme_skills(manifest),
+        quick_prompts="\n".join(f"- {item}" for item in manifest["quick_prompts"]) or "- 暂无预设示例，请直接描述你的目标。",
+        mcp_note=render_readme_mcp_note(manifest),
+        settings=render_settings_summary(manifest),
+        notes=render_readme_notes(manifest),
+    )
+
+
+def _write_project_locked(manifest: dict[str, Any], output_root: Path, *, force: bool) -> Path:
+    project_dir = output_root / manifest["slug"]
+    if project_dir.exists():
+        if not force:
+            fail(f"{project_dir} already exists; pass --force to replace it")
+    staging_root = Path(tempfile.mkdtemp(prefix=f".{manifest['slug']}.staging-", dir=output_root))
+    staged_project = staging_root / manifest["slug"]
+    agents_dir = staged_project / EXPERT_DIR / AGENTS_SUBDIR
+    skills_dir = staged_project / EXPERT_DIR / SKILLS_SUBDIR
+    agents_dir.mkdir(parents=True)
+    skills_dir.mkdir(parents=True)
+    write_avatar_assets(staged_project, manifest)
+
+    (staged_project / MANIFEST_FILE).write_text(
+        json.dumps(manifest["source_manifest"], ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    existing_gitignore = ""
+    if project_dir.is_dir() and (project_dir / ".gitignore").is_file():
+        existing_gitignore = (project_dir / ".gitignore").read_text(encoding="utf-8")
+    (staged_project / ".gitignore").write_text(
+        gitignore_contract.merge_content(existing_gitignore), encoding="utf-8"
+    )
+    runtime_config = render_runtime_config(manifest)
+    (staged_project / RUNTIME_CONFIG).write_text(
+        json.dumps(runtime_config, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    env_names = contract.extract_env_references(runtime_config)
+    if env_names:
+        (staged_project / ".env.example").write_text(
+            contract.render_env_example(env_names),
+            encoding="utf-8",
+        )
+    write_runtime_extensions(staged_project, manifest)
+
+    primary = manifest["primary_agent"]
+    (agents_dir / f"{primary['id']}.md").write_text(
+        render_agent(primary, manifest, is_primary=True), encoding="utf-8"
+    )
+    for sub in manifest["subagents"]:
+        (agents_dir / f"{sub['id']}.md").write_text(
+            render_agent(sub, manifest, is_primary=False), encoding="utf-8"
+        )
+
+    if manifest["skill_mode"] == "legacy":
+        for skill_name in manifest["common_skills"]:
+            common_content = renderers.render_spec(
+                "common-skill",
+                expert_name=manifest["name"],
+                description=manifest["description"],
+                expert_type=manifest["type"],
+                when_to_use="\n".join(
+                    f"- {item}" for item in manifest["quick_prompts"][:4]
+                )
+                or "- 本包任一 agent 需要统一任务澄清、证据、验证和交付格式时。",
+                resource_navigation=render_skill_resource_navigation(
+                    manifest, skill_name
+                ),
+            )
+            if workflow_autonomy.has_autonomy_contract(manifest["workflows"]):
+                common_content += (
+                    "\n## Workflow 自主度合同\n\n"
+                    + render_workflows(manifest)
+                    + "\n"
+                )
+            skill_path = skills_dir / skill_name
+            skill_path.mkdir()
+            (skill_path / "SKILL.md").write_text(
+                render_skill(
+                    skill_name,
+                    render_common_skill_description(manifest),
+                    common_content,
+                    metadata={
+                        "package": manifest["slug"],
+                        "role": "all",
+                        "type": "common",
+                    },
+                ),
+                encoding="utf-8",
+            )
+        for role in [primary, *manifest["subagents"]]:
+            for skill_name in role["skills"]:
+                skill_path = skills_dir / skill_name
+                skill_path.mkdir()
+                content = renderers.render_spec(
+                    "role-skill",
+                    title=role["title"],
+                    expert_name=manifest["name"],
+                    responsibilities=bullet_list(
+                        role["responsibilities"],
+                        f"为 {role['title']} 提供聚焦的专业指引。",
+                    ),
+                    when_to_use=render_trigger_examples(
+                        role,
+                        manifest,
+                        is_primary=role["id"] == primary["id"],
+                    ),
+                    workflow=render_role_workflow(
+                        role,
+                        manifest,
+                        "在专业范围内执行方法并验证结果。",
+                    ),
+                    resource_navigation=render_skill_resource_navigation(
+                        manifest, skill_name
+                    ),
+                    handoff_contract=render_handoff_contract(role),
+                    quality_gates=bullet_list(
+                        role["quality_gates"],
+                        "交付前验证专业工作是否满足要求。",
+                    ),
+                )
+                (skill_path / "SKILL.md").write_text(
+                    render_skill(
+                        skill_name,
+                        render_role_skill_description(role, manifest),
+                        content,
+                        metadata={
+                            "package": manifest["slug"],
+                            "role": role["id"],
+                            "type": "role",
+                        },
+                    ),
+                    encoding="utf-8",
+                )
+
+    write_package_resources(staged_project, manifest)
+    (staged_project / "README.md").write_text(render_readme(manifest), encoding="utf-8")
+
+    import validate_expert
+
+    validation = validate_expert.validate_package(staged_project)
+    if not validation.ok:
+        details = "; ".join(validation.errors[:8])
+        shutil.rmtree(staging_root, ignore_errors=True)
+        fail(f"generated staging package failed validation: {details}")
+
+    backup = output_root / f".{manifest['slug']}.backup-{uuid.uuid4().hex}"
+    replaced = False
+    installed = False
+    committed = False
+    git_history_moved = False
+    try:
+        if project_dir.exists():
+            os.replace(project_dir, backup)
+            replaced = True
+        os.replace(staged_project, project_dir)
+        installed = True
+        if replaced and (backup / ".git").is_dir():
+            os.replace(backup / ".git", project_dir / ".git")
+            git_history_moved = True
+        validate_generated_project(project_dir, output_root, manifest["slug"])
+        validation = validate_expert.validate_package(project_dir)
+        if not validation.ok:
+            details = "; ".join(validation.errors[:8])
+            fail(f"generated live package failed validation: {details}")
+        committed = True
+    except BaseException:
+        if git_history_moved and (project_dir / ".git").is_dir() and backup.is_dir():
+            os.replace(project_dir / ".git", backup / ".git")
+        if not committed and installed and project_dir.exists():
+            shutil.rmtree(project_dir, ignore_errors=True)
+        if not committed and replaced and backup.exists():
+            os.replace(backup, project_dir)
+        raise
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
+    if replaced and backup.exists():
+        try:
+            shutil.rmtree(backup)
+        except OSError as error:
+            print(
+                output_sanitizer.sanitize_text(
+                    "warning: package committed but backup cleanup failed; "
+                    f"recovery copy kept at {backup}: {error}"
+                ),
+                file=sys.stderr,
+            )
+    return project_dir
+
+
+def package_identity(raw: dict[str, Any]) -> tuple[str, str]:
+    package_type = raw.get("type")
+    if package_type == "expert":
+        role = raw.get("agent")
+    elif package_type == "team":
+        role = raw.get("primary_agent")
+    else:
+        fail("controlled target expert.json has invalid type")
+    if not isinstance(role, dict) or not isinstance(role.get("id"), str) or not role["id"].strip():
+        fail("controlled target expert.json has invalid primary Agent ID")
+    return package_type, role["id"].strip()
+
+
+def write_project(manifest: dict[str, Any], output_root: Path, *, force: bool) -> Path:
+    with package_lock(output_root, manifest["slug"]):
+        return _write_project_locked(manifest, output_root, force=force)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest", required=True, type=Path, help="Path to expert.json")
+    parser.add_argument(
+        "--creation-target",
+        choices=execution_context.CREATION_TARGETS,
+        help=(
+            "Create under MobileWork personal experts (my-experts compatibility "
+            "target), the current workspace, or an explicit custom parent"
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help=(
+            "Assert the resolved output root, or select the parent with --creation-target custom"
+        ),
+    )
+    parser.add_argument(
+        "--my-experts",
+        action="store_true",
+        help="Compatibility alias for --creation-target my-experts",
+    )
+    parser.add_argument("--force", action="store_true", help="Replace existing output project directory")
+    parser.add_argument(
+        "--expected-revision",
+        help="Require the existing controlled target to match this SHA-256 revision",
+    )
+    return parser.parse_args()
+
+
+def _legacy_main() -> int:
+    args = parse_args()
+    if args.my_experts and args.creation_target is not None:
+        fail("CREATION_TARGET_ANSWER_AMBIGUOUS: use only one creation target selector")
+    creation_target = "my-experts" if args.my_experts else args.creation_target
+    output_dir = normalized_output_dir(
+        args.output_dir,
+        creation_target=creation_target,
+    )
+    if shutil.which("git") is None:
+        fail("Git is required to create or modify a version-controlled expert source")
+    if args.manifest.name != MANIFEST_FILE:
+        fail(f"manifest file must be named {MANIFEST_FILE}")
+    raw = load_json(args.manifest)
+    controlled_target_raw = os.environ.get(CONTROLLED_TARGET_ENV, "").strip()
+    requested_identity = package_identity(raw) if controlled_target_raw else None
+    if controlled_target_raw:
+        early_target = execution_context.canonical_path(Path(controlled_target_raw))
+        if early_target.is_dir():
+            current_identity = package_identity(load_json(early_target / MANIFEST_FILE))
+            if requested_identity is not None and requested_identity[0] != current_identity[0]:
+                fail("controlled target cannot change expert type")
+            if requested_identity is not None and requested_identity[1] != current_identity[1]:
+                fail("controlled target cannot change primary Agent ID")
+    manifest = normalize_manifest(raw, manifest_dir=args.manifest.parent)
+    try:
+        execution_context.validate_package_target(
+            execution_context.resolve_execution_context(
+                requested_output_dir=args.output_dir,
+                creation_target=creation_target,
+            ),
+            manifest["slug"],
+        )
+    except execution_context.ExecutionContextError as error:
+        fail(f"{error.code}: {error}")
+    prepare_avatar_assets(manifest, args.manifest.parent)
+    if controlled_target_raw:
+        controlled_target = execution_context.canonical_path(Path(controlled_target_raw))
+        source_manifest = execution_context.canonical_path(args.manifest)
+        if controlled_target.name != manifest["slug"]:
+            fail("controlled target slug does not match expert.json")
+        if output_dir != controlled_target.parent:
+            fail("controlled target requires its parent as --output-dir")
+        try:
+            source_manifest.relative_to(controlled_target)
+        except ValueError:
+            pass
+        else:
+            fail("controlled target requires a temporary manifest outside the source package")
+        if not args.expected_revision:
+            fail("controlled target requires --expected-revision")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if controlled_target_raw:
+        with package_lock(output_dir, manifest["slug"]):
+            current_target = output_dir / manifest["slug"]
+            if not current_target.is_dir():
+                fail("controlled target package does not exist")
+            current_revision = calculate_package_revision(current_target)
+            if current_revision != args.expected_revision:
+                fail(
+                    "controlled target revision conflict: "
+                    f"expected {args.expected_revision}, got {current_revision}"
+                )
+            current_manifest = load_json(current_target / MANIFEST_FILE)
+            current_type, current_primary_id = package_identity(current_manifest)
+            requested_type, requested_primary_id = requested_identity or (
+                manifest["type"],
+                manifest["primary_agent"]["id"],
+            )
+            if requested_type != current_type:
+                fail("controlled target cannot change expert type")
+            if requested_primary_id != current_primary_id:
+                fail("controlled target cannot change primary Agent ID")
+            project_dir = _write_project_locked(manifest, output_dir, force=args.force)
+    else:
+        project_dir = write_project(manifest, output_dir, force=args.force)
+    validate_generated_project(project_dir, output_dir, manifest["slug"])
+    import expert_vcs
+
+    try:
+        vcs = expert_vcs.initialize_repository(project_dir)
+    except expert_vcs.ExpertVcsError as exc:
+        fail(f"expert was generated but local Git initialization failed: {exc}")
+    print(
+        output_sanitizer.sanitize_text(
+            "VERSION_PENDING: expert source changed successfully; ask the user whether to "
+            "publish the proposed SemVer with version_expert.py. "
+            + output_sanitizer.json_dumps(vcs)
+        ),
+        file=sys.stderr,
+    )
+    print(output_sanitizer.sanitize_text(str(project_dir)))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    return cli_contract.run_legacy_entrypoint(
+        "create-expert",
+        _legacy_main,
+        argv=argv,
+        default_format="human",
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

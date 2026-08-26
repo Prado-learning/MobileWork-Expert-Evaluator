@@ -5,6 +5,9 @@ description: >-
   评测 case、批量审核 case、发起真实评测（promptfoo + opencode）、查看评测结果与优化建议、
   或打开 MobileEval 评测中心网页时触发。能力覆盖：分析专家团 → 生成 case →
   审核 → 真实评测 → 优化建议，并可在 OpenWork 内置浏览器打开评测中心（网页 + 后端）。
+  本插件还捆绑 mobilework-expert-manager 技能（skills/mobilework-expert-manager/）：
+  当用户要求创建/转换/编辑专家或专家团（而非评测）时，加载并执行该技能生成 OpenCode
+  格式专家包（含 .opencode/agents/*.md），再回到本评测流程 import-expert → 评测。
 compatibility: Requires Python 3.10+ 与 Node.js 18+（npm）——两者缺失时先征求用户同意再协助安装（见「环境准备」）。flask / promptfoo / opencode CLI 缺失时自动安装（mobileeval_ctl deps）；@opencode-ai/sdk 由 promptfoo 内置；PyYAML 可选（缺失时 case 用 .json 格式）。
 ---
 
@@ -19,6 +22,28 @@ analyze-expert 分析 → generate-cases 生成 case → review-cases 审核
 ```
 
 默认用中文沟通；命令、路径与代码保持原文。
+
+## 技能协作：mobilework-expert-manager（何时调用）
+
+本插件捆绑了 `skills/mobilework-expert-manager/` 技能（专家包管理器）。它与评测流程互补，
+**触发时机按用户意图区分**：
+
+| 用户要求 | 执行者 | 说明 |
+|---|---|---|
+| 评测/评估/生成 case/审核/发起评测/看报告 | **本技能**（promptfoo-expert-eval） | 走下方标准评测工作流 |
+| **创建**新专家/专家团（按自然语言） | **mobilework-expert-manager** | 加载其 SKILL.md，先确认业务方案再生成 OpenCode 专家包 |
+| **转换**非 OpenCode 格式为 OpenCode 格式 | **mobilework-expert-manager** | 按迁移/诊断流程转换 |
+| **编辑**/修改已有专家或专家团 | **mobilework-expert-manager** | 受控修改，遵守其 controlled-modification 协议 |
+| 创建/转换/编辑**完成后**要评测 | **先 manager 后本技能** | 用生成/修改后的包走 import-expert → 评测 |
+
+**协作铁律：**
+1. 用户意图是"创建/转换/编辑"→ **必须**加载 `skills/mobilework-expert-manager/SKILL.md`
+   并按其协议执行（其脚本在 `skills/mobilework-expert-manager/scripts/`），不得用本评测流程的
+   `import-expert`/`analyze-expert` 代替（那些是评测侧能力，不生成专家包）。
+2. manager 生成/修改的专家包是标准 OpenCode 格式（`expert.json` manifest +
+   `.opencode/agents/*.md` + `opencode.json`），与本评测的导入格式天然兼容。
+3. 评测对象缺失或格式不符时，提示用户先用 manager 技能创建/转换，再回到本流程。
+4. 两个技能共享同一工作区时，路径以各自对象记录为准，不互相改写对方产物。
 
 ## 关键路径（先确认存在）
 

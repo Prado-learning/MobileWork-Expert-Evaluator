@@ -1,0 +1,210 @@
+# MobileWork 可分发专家包规范
+
+本文件定义包 allowlist、`package_resources[]`、业务运行产物位置、便携性扫描和 zip 分发合同。
+
+## 目录
+
+1. [根目录与运行资源](#1-根目录与运行资源)
+2. [package_resources](#2-package_resources)
+3. [包内便携性](#3-包内便携性)
+4. [业务运行产物](#4-业务运行产物)
+5. [Validator 合同](#5-validator-合同)
+6. [Zip 分发](#6-zip-分发)
+7. [安装边界](#7-安装边界)
+8. [最终检查](#8-最终检查)
+
+## 1. 根目录与运行资源
+
+```text
+<slug>/
+├── expert.json
+├── opencode.json
+├── README.md
+├── .env.example                 # 可选，仅占位值
+├── .gitignore                   # 管理器 required block，可分发
+├── avatars/
+└── .opencode/
+    ├── agents/
+    ├── skills/
+    ├── commands/                # 可选
+    ├── tools/                   # 可选
+    ├── plugins/                 # 可选
+    ├── references/<slug>/<alias>/ # 可选
+    ├── instructions/<slug>/     # 可选；roles/ 子目录保存角色规则
+    └── package.json             # 可选，不携带 node_modules
+```
+
+可信源目录可有根 `.git/`，但分发包中禁止任何 `.git/**`。根级 `AGENTS.md`、`references/`、
+`instructions/`、真实 `.env`、额外配置和其他隐藏目录非法。
+需要影响整个 workspace 的专家包指令必须放入 `.opencode/instructions/<slug>/`，并由
+`opencode.json.instructions` 索引。
+角色规则固定放入 `.opencode/instructions/<slug>/roles/`，由 `expert.json` 分配后内联到对应 Agent
+Markdown，不进入根级 `opencode.json.instructions`。
+`.opencode/` 中的 agents、skills、commands、tools、plugins、references 和 instructions 是随包
+分发的运行资源，不是专家执行任务时产生的业务文件。
+
+## 2. `package_resources[]`
+
+新统一技能池的 `package_resources[]` 声明每个技能内包括 `SKILL.md` 在内的全部真实文件：
+
+```json
+{
+  "package_resources": [
+    {
+      "path": ".opencode/skills/contract-clause-review/SKILL.md",
+      "kind": "text",
+      "sha256": "<required-lowercase-sha256>"
+    },
+    {
+      "path": ".opencode/skills/contract-clause-review/templates/input.xlsx",
+      "kind": "binary",
+      "sha256": "<required-lowercase-sha256>"
+    }
+  ]
+}
+```
+
+- `path` 必须位于 manifest 顶层 `skills[]` 已声明的完整 skill name 子树。
+- 每个技能的 `SKILL.md` 必须声明。
+- `kind` 只能是 `text` 或 `binary`；text 必须是 UTF-8。
+- 每个条目都必须记录与真实字节匹配的小写 SHA-256；导入和迁移流程重新计算并写入。
+- skill 子树内所有文件都必须声明；孤儿文件校验失败。
+- `origin: uploaded`、`edit_policy: preserved` 的技能不因生成、重建、打包或安装而改变任何字节。
+- 旧 schema 未修改时仍按历史规则由生成器拥有 `SKILL.md`、只声明额外资源；结构性修改先迁移，
+  迁移后立即适用统一规则。
+
+`--force` 在 sibling staging 中重建，只保留当前 manifest 声明的资源。staging 完整校验通过后
+才原子替换；失败必须保持旧包逐字节不变。
+
+## 3. 包内便携性
+
+包文件内容和路径禁止：
+
+- 开发机绝对路径，例如 `/Users/<name>`、`/home/<name>` 或本机盘符路径；
+- `~/.agents`、`.agents/skills`、本地 checkout 或浏览器 profile；
+- 路径逃逸 `..`、绝对路径或 symlink；
+- 真实 token、API key、密码、私有 endpoint 或非占位 `.env`；
+- `.git`、`.serena`、`node_modules`、缓存、日志、Python bytecode、OS 元数据；
+- manifest 未声明的 commands、tools、plugins、references、instructions 或 skill 资源。
+
+允许包相对路径、命令名、HTTPS URL、`{env:VARIABLE}` 和业务安全占位符。
+
+## 4. 业务运行产物
+
+会生成报告、JSON、Markdown、Excel、图片或日志的专家，必须定义 workspace root。
+
+默认目录：
+
+```text
+<workspace>/<业务交付目录>/<run-id>/
+```
+
+禁止写入：
+
+- `<workspace>/.opencode/`；
+- `<workspace>/.mobilework-engine/`；
+- workspace 外部；
+- 专家安装目录或全局 skill 目录。
+
+脚本应支持 `--workspace-root <workspace>` 或等价机制。产物正文中的输入、输出、模板和报告路径
+使用 workspace 相对形式；外部输入只展示文件名、占位符或安全业务描述。
+
+扫描业务产物：
+
+```bash
+python scripts/scan_portable_artifacts.py \
+  --workspace-root <workspace> \
+  <workspace>/<业务交付目录>/<run-id>
+```
+
+扫描器检查 JSON、Markdown、文本、日志和 Excel 字符串单元格，同时验证产物目录位于 workspace
+内部且不落入引擎目录。
+
+扫描专家包时不要传 `--workspace-root`，以免把包内合法 `.opencode/skills/...` 误判为业务产物。
+
+## 5. Validator 合同
+
+`scripts/validate_expert.py` 至少检查：
+
+- `expert.json` 存在且与 type、角色、skill、workflow 和 runtime config 一致；
+- 根目录和 `.opencode/` 只包含 allowlist 文件；
+- symlink、路径逃逸、未声明文件和内容漂移全部失败；
+- `package_resources[]` hash 与真实字节一致；
+- agent frontmatter、permission、steps、description 与运行配置一致；
+- 每个 skill frontmatter 通过 Agent Skills 官方字段、长度、类型和目录名规则，legacy 生成技能
+  额外要求 `compatibility: opencode`；
+- avatar、MCP、env、references、instructions、plugins 和 LSP 的声明与文件一致；
+- 所有文本和支持的二进制产物不含非便携路径或 secret-like 内容。
+
+不要为了让 validator 通过而删除或重写用户未授权的业务输入；先报告具体失败项。
+
+## 6. Zip 分发
+
+打包前：
+
+```bash
+python scripts/validate_expert.py <package-dir>
+python scripts/scan_portable_artifacts.py <package-dir>
+```
+
+打包：
+
+```bash
+python scripts/package_expert.py \
+  --package-dir <package-dir> \
+  --output-dir <dist-dir>
+```
+
+zip 根目录只能包含一个 `<slug>/`。packager 必须独立执行 allowlist 和 symlink 检查，不能只相信
+validator 的自报结果。目标 `<slug>.zip` 已存在时必须显式传 `--force`；未传时旧 zip 的字节
+不得改变。
+
+完成后：
+
+```bash
+unzip -t <dist-dir>/<slug>.zip
+```
+
+packager 在目标目录内创建 sibling temporary zip，依次运行 Python CRC/顶层目录检查、可选的
+外部 `unzip -t`、干净解压后的 validator 和便携性扫描，全部通过后才用 `os.replace` 发布。
+`--skip-unzip-test` 只跳过外部命令，不能跳过 Python 检查和解压复验。任一步失败都删除临时
+文件并保留旧 zip。分发包不得包含缓存、真实 `.env`、`node_modules`、`.git`、日志、字节码或
+未声明资源。
+
+## 7. 安装边界
+
+完整 CLI 安装读取包根 `opencode.json`，把配置合并到
+`<workspace>/.opencode/opencode.jsonc`，并把包内 `.opencode/**` 复制到工作区对应目录；receipt
+追踪每个 slug 的文件、配置键与依赖 ownership。安装结构、路径重写、冲突和回滚规则见
+`runtime-extensions-spec.md`。
+
+卸载只依据 receipt 删除未漂移、且没有其他专家共同拥有的文件、配置和依赖。receipt 文件名、
+slug、contract、文件相对路径和 SHA-256 先整体校验；缺少 receipt、hash 变化、路径逃逸或配置
+漂移时先停止，不猜测归属。安装前已经存在且没有 receipt owner 的同值列表项或依赖不会被新包
+认领，卸载时必须保留。
+新安装及成功升级写 receipt contract 3，并绑定 package tree、manifest、manager contract、安装时
+resolved target（允许 `unknown`）、target capabilities 与包拥有的 projection。只有 receipt target
+与 trusted-config 显式输入的 exact target 一致时才能继续 `config-loadable` 证据链。contract 1/2
+继续可读；contract 1 可能错误
+认领同值列表项或依赖，因此升级与卸载只信任它的文件、mapping 和 scalar ownership，旧版
+`plugin`、`instructions` 与依赖一律保守保留。缺少 `bindings` 的旧 receipt 仍然有效。
+
+同 slug `--force` 只允许无漂移升级。安装器在升级或卸载的任何 staging 或 workspace 写入前验证
+全部 receipt-owned 文件（包括共享文件）、配置与依赖，并在提交前重检；发现漂移时返回脱敏
+preview 和 state-bound SHA-256，exit 1，且目标字节不变。经显式四重确认的 POSIX 高危丢弃与
+exact backup 恢复合同统一见 `manager-contract.md`；普通 `--force` 永不丢弃漂移。
+
+旧 `.mobilework-engine` 只作为迁移检测和禁止的业务产物目录保留；安装器不读取、不写入、
+不双写也不自动删除它。重新安装专家是迁移到 `.opencode` 的支持路径。
+
+桌面端“立即使用”不保证安装所有 runtime extensions；依赖 commands、tools、plugins、references、
+instructions、LSP、MCP 或 `.opencode/package.json` 时，使用 `scripts/install_expert.py` 验证。
+
+## 8. 最终检查
+
+- 包根与 `.opencode/` 文件集合符合 allowlist。
+- manifest 声明资源与真实文件一一对应，hash 可复算。
+- 没有非便携路径、secret、symlink、缓存或未声明资源。
+- 业务产物位于 workspace 业务目录，内容路径可迁移。
+- zip 只有一个顶层 slug 目录，`unzip -t` 通过。
+- 解压包再次通过 validator 与 portable scan。
