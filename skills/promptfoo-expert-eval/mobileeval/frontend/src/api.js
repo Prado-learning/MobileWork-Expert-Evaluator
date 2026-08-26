@@ -41,6 +41,9 @@ export const api = {
   // case 管理（对象导入后 AI 自动生成 + 人工审核）
   listCases: (objectId) => req(`/api/objects/${objectId}/cases`),
   generateCases: (objectId, count = 4, mode = 'replace') => req(`/api/objects/${objectId}/cases/generate`, { method: 'POST', body: JSON.stringify({ count, mode }) }),
+  importCases: (objectId, body) => req(`/api/objects/${objectId}/cases/import`, { method: 'POST', body: JSON.stringify(body) }),
+  uploadCasesFile: (objectId, body) => req(`/api/objects/${objectId}/cases/upload`, { method: 'POST', body: JSON.stringify(body) }),
+  listPendingImports: (objectId) => req(`/api/objects/${objectId}/cases/pending-imports`),
   updateCase: (caseId, body) => req(`/api/cases/${caseId}`, { method: 'PUT', body: JSON.stringify(body) }),
   approveCase: (caseId) => req(`/api/cases/${caseId}/approve`, { method: 'POST' }),
   rejectCase: (caseId, note = '') => req(`/api/cases/${caseId}/reject`, { method: 'POST', body: JSON.stringify({ note }) }),
@@ -62,4 +65,7 @@ export const api = {
   updateModel: (id, body) => req(`/api/models/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteModel: (id) => req(`/api/models/${id}`, { method: 'DELETE' }),
   browse: (path) => req(`/api/fs/browse?path=${encodeURIComponent(path || '')}`),
+  // Expert Manager 桥接（AI 创建/编辑专家）
+  expertManagerStatus: () => req('/api/expert-manager/status'),
+  expertManagerGenerate: (body) => req('/api/expert-manager/generate', { method: 'POST', body: JSON.stringify(body) }),
 }

@@ -24,7 +24,7 @@ export default function ObjectTree({ collapsed, onToggleCollapse }) {
     return (
       <div className="h-full flex flex-col bg-page">
         <div className="py-2 border-b border-hairline flex flex-col items-center gap-1">
-          <button className="btn !px-1.5 !py-1 text-xs" onClick={onToggleCollapse} title="展开侧栏">
+          <button className="btn !px-1.5 text-xs" onClick={onToggleCollapse} title="展开侧栏">
             <PanelLeftOpen size={16} />
           </button>
         </div>
@@ -59,7 +59,7 @@ export default function ObjectTree({ collapsed, onToggleCollapse }) {
           </div>
           <div className="text-[11px] text-muted mt-0.5 truncate">专家/专家团 → 用例 → 运行</div>
         </div>
-        <button className="btn !px-1.5 !py-1 text-xs shrink-0" onClick={onToggleCollapse} title="折叠侧栏">
+        <button className="btn !px-1.5 text-xs shrink-0" onClick={onToggleCollapse} title="折叠侧栏">
           <PanelLeftClose size={16} />
         </button>
       </div>

@@ -382,6 +382,8 @@ def _migrate_detask(conn):
             status TEXT NOT NULL DEFAULT 'pending',
             provider TEXT DEFAULT '',
             model TEXT DEFAULT '',
+            base_url TEXT DEFAULT '',
+            model_id INTEGER,
             experiment_id INTEGER,
             variant TEXT DEFAULT '',
             version TEXT DEFAULT '',

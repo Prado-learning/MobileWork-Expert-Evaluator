@@ -9,6 +9,7 @@ import OptimizePage from './pages/OptimizePage'
 import ComparePage from './pages/ComparePage'
 import ExperimentsPage from './pages/ExperimentsPage'
 import ModelsPage from './pages/ModelsPage'
+import CaseDetailPage from './pages/CaseDetailPage'
 
 export default function App() {
   // AI 对话由 OpenWork 完成；本应用只负责评测数据的管理与可视化。
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="/" element={<Navigate to="/objects" replace />} />
             <Route path="/objects" element={<ObjectsPage />} />
             <Route path="/objects/:objectId" element={<ObjectDetailPage />} />
+            <Route path="/objects/:objectId/cases/:caseId" element={<CaseDetailPage />} />
             <Route path="/objects/:objectId/versions" element={<VersionsPage />} />
             <Route path="/objects/:objectId/optimize" element={<OptimizePage />} />
             <Route path="/objects/:objectId/experiments" element={<ExperimentsPage />} />

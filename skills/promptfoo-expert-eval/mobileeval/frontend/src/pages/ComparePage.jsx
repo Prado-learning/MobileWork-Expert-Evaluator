@@ -43,11 +43,11 @@ export default function ComparePage() {
           <Link to={`/objects/${objectId}/optimize`} className="btn !px-2 !py-1 text-xs"><ArrowLeft size={13} /> 返回优化</Link>
           <h2 className="font-semibold flex items-center gap-1.5"><GitCompare size={16} className="text-accent" /> 优化对比报告</h2>
         </div>
-        <div className="flex items-center gap-2 text-xs">
+          <div className="flex items-center gap-2 text-xs">
           <span className="text-muted">优化后评测：</span>
           <select className="input !w-auto !py-1" value={optId || ''} onChange={(e) => setOptId(Number(e.target.value))}>
             <option value="">— 选择 —</option>
-            {candRuns.map((r) => <option key={r.id} value={r.id}>run #{r.id}（{r.created_at}）</option>)}
+            {candRuns.map((r) => <option key={r.id} value={r.id}>运行 #{r.id}（{r.created_at}）</option>)}
           </select>
         </div>
       </div>
@@ -60,7 +60,7 @@ export default function ComparePage() {
             {[['基线', data.base], ['优化后', data.opt]].map(([label, r]) => (
               <div key={label} className="card">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-semibold text-sm">{label}（run #{r.id}）</h3>
+                  <h3 className="font-semibold text-sm">{label}（运行 #{r.id}）</h3>
                   <StatusBadge status={r.status} />
                 </div>
                 <div className="grid grid-cols-4 gap-2 text-center">
@@ -76,11 +76,11 @@ export default function ComparePage() {
             ))}
           </div>
 
-          {/* 逐 case 对比 */}
+          {/* 逐用例对比 */}
           <div className="card mb-4">
-            <h3 className="font-semibold text-sm mb-2">逐 case 对比</h3>
+            <h3 className="font-semibold text-sm mb-2">逐用例对比</h3>
             <table className="table-base">
-              <thead><tr><th>case</th><th>标题</th><th>基线</th><th>优化后</th><th>变化</th></tr></thead>
+              <thead><tr><th>用例</th><th>标题</th><th>基线</th><th>优化后</th><th>变化</th></tr></thead>
               <tbody>
                 {data.cases.map((c) => {
                   const b = c.base, o = c.opt

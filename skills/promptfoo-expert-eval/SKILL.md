@@ -5,6 +5,9 @@ description: >-
   评测 case、批量审核 case、发起真实评测（promptfoo + opencode）、查看评测结果与优化建议、
   或打开 MobileEval 评测中心网页时触发。能力覆盖：分析专家团 → 生成 case →
   审核 → 真实评测 → 优化建议，并可在 OpenWork 内置浏览器打开评测中心（网页 + 后端）。
+  本插件还捆绑 mobilework-expert-manager 技能（skills/mobilework-expert-manager/）：
+  当用户要求创建/转换/编辑专家或专家团（而非评测）时，加载并执行该技能生成 OpenCode
+  格式专家包（含 .opencode/agents/*.md），再回到本评测流程 import-expert → 评测。
 compatibility: Requires Python 3.10+ 与 Node.js 18+（npm）——两者缺失时先征求用户同意再协助安装（见「环境准备」）。flask / promptfoo / opencode CLI 缺失时自动安装（mobileeval_ctl deps）；@opencode-ai/sdk 由 promptfoo 内置；PyYAML 可选（缺失时 case 用 .json 格式）。
 ---
 
@@ -19,6 +22,28 @@ analyze-expert 分析 → generate-cases 生成 case → review-cases 审核
 ```
 
 默认用中文沟通；命令、路径与代码保持原文。
+
+## 技能协作：mobilework-expert-manager（何时调用）
+
+本插件捆绑了 `skills/mobilework-expert-manager/` 技能（专家包管理器）。它与评测流程互补，
+**触发时机按用户意图区分**：
+
+| 用户要求 | 执行者 | 说明 |
+|---|---|---|
+| 评测/评估/生成 case/审核/发起评测/看报告 | **本技能**（promptfoo-expert-eval） | 走下方标准评测工作流 |
+| **创建**新专家/专家团（按自然语言） | **mobilework-expert-manager** | 加载其 SKILL.md，先确认业务方案再生成 OpenCode 专家包 |
+| **转换**非 OpenCode 格式为 OpenCode 格式 | **mobilework-expert-manager** | 按迁移/诊断流程转换 |
+| **编辑**/修改已有专家或专家团 | **mobilework-expert-manager** | 受控修改，遵守其 controlled-modification 协议 |
+| 创建/转换/编辑**完成后**要评测 | **先 manager 后本技能** | 用生成/修改后的包走 import-expert → 评测 |
+
+**协作铁律：**
+1. 用户意图是"创建/转换/编辑"→ **必须**加载 `skills/mobilework-expert-manager/SKILL.md`
+   并按其协议执行（其脚本在 `skills/mobilework-expert-manager/scripts/`），不得用本评测流程的
+   `import-expert`/`analyze-expert` 代替（那些是评测侧能力，不生成专家包）。
+2. manager 生成/修改的专家包是标准 OpenCode 格式（`expert.json` manifest +
+   `.opencode/agents/*.md` + `opencode.json`），与本评测的导入格式天然兼容。
+3. 评测对象缺失或格式不符时，提示用户先用 manager 技能创建/转换，再回到本流程。
+4. 两个技能共享同一工作区时，路径以各自对象记录为准，不互相改写对方产物。
 
 ## 关键路径（先确认存在）
 
@@ -142,6 +167,35 @@ python <scripts>/expert_tools.py generate-cases --workspace=<被测工作区> --
 python <scripts>/mobileeval_ctl.py open --page=object --object-id=9
 ```
 在 OpenWork 内置浏览器打开评测中心页，展示刚生成的 case 列表（含每条 title/type/status，可逐条查看与审核）。
+
+### 4d. 导入并转换用户提供的现成用例（重要：转换由 AI 完成）
+
+用户在评测中心页「评测用例」Tab 点「导入用例」→ 复制提示词模板 → 在对话框发送（填入自己用例文件的路径）。
+模板内容大致为：
+> 请读取本机文件 <文件路径> 中的评测用例，转换为评测中心标准用例格式，导入到当前专家/专家团的评测用例中（object_id=...）。转换结果先展示给我确认，确认后再写入。
+
+这些用例可能是任意格式（JSON/YAML/Markdown/Excel 等），**不一定符合评测中心标准结构**。
+转换由 **AI（本会话）** 完成，不调用额外 LLM：
+
+1. **拿到文件内容**：用户消息中给出文件路径 → 用 `read` 读取；若用户直接在对话框粘贴内容，直接用粘贴文本。
+2. **AI 转换**：识别原格式（JSON/YAML/Markdown/表格等），把每条用例转换为标准结构：
+   ```json
+   {"case_id": "imp-1", "title": "用例标题", "type": "structured|hybrid|open_ended",
+    "dimension": "", "prompt": "发给被测专家的完整任务指令（可含 {output_dir} 占位）",
+    "output_dir": "eval-runs/{run_id}/imp-1",
+    "assertions": [{"type": "contains|regex|javascript|tool-call|delegation|kb-hit|llm-rubric", "value": "..."}]}
+   ```
+   原内容已有标题/步骤/期望等 → 映射到 prompt（合成可执行指令）；无法确定的字段用默认（type=hybrid、assertions=[]）。
+   转换结果**先展示给用户确认**，确认后再落库。
+3. **落库**（转换好的 case 数组直接写入）：
+   ```bash
+   python <scripts>/expert_tools.py import-cases --object-id=9 --cases='[{"title":"...","prompt":"...",...}]' --mode=append --db-path=<db>
+   ```
+   落库为 `pending`，走「批量审核 case」流程（见下节）。
+
+> 注意：`import-cases` 只负责校验与落库，**不做格式转换**；转换必须是 AI 在会话中完成，
+> 因为输入格式千变万化，需要理解语义才能正确映射。
+> 前端「导入用例」只是给出提示词模板，**转换完全由 AI 在收到用户消息后执行**。
 
 ### 5. 批量审核 case
 ```bash

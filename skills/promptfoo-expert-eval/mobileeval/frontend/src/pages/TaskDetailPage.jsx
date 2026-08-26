@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, ArrowLeft, Pencil, Play, X, Save } from 'lucide-react'
 import { api } from '../api'
 import { Modal, StatusBadge, ScenarioBadge, Empty, Spinner, fmtTime, fmtMs, HelpButton, TaskVsCaseHelp } from '../components/ui'
 
@@ -71,7 +71,7 @@ export default function TaskDetailPage() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
-        <Link to={`/objects/${objectId}`} className="btn !px-2">←</Link>
+        <Link to={`/objects/${objectId}`} className="btn !px-2.5" aria-label="返回"><ArrowLeft size={14} /></Link>
         <h1 className="text-xl font-semibold">{task.name}</h1>
         <ScenarioBadge type={task.scenario_type} />
         <HelpButton onClick={() => setHelpOpen(true)} title="评测任务 vs 评测用例 关系说明" />
@@ -79,8 +79,8 @@ export default function TaskDetailPage() {
           <button className="btn" onClick={() => {
             setForm({ ...task, assertions: JSON.stringify(task.assertions, null, 2), human_metrics: JSON.stringify(task.human_metrics, null, 2) })
             setEditing(true)
-          }}>编辑配置</button>
-          <button className="btn btn-primary" onClick={() => setShowRun(true)}>+ 发起评测</button>
+          }}><Pencil size={13} />编辑配置</button>
+          <button className="btn btn-primary" onClick={() => setShowRun(true)}><Play size={13} />发起评测</button>
         </div>
       </div>
       {error && <div className="card !border-danger/40 text-danger mb-4">{error}</div>}
@@ -214,8 +214,8 @@ export default function TaskDetailPage() {
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-4">
-          <button className="btn" onClick={() => setShowRun(false)}>取消</button>
-          <button className="btn btn-primary" disabled={launching} onClick={launch}>{launching ? <Spinner light /> : '启动评测'}</button>
+          <button className="btn" onClick={() => setShowRun(false)}><X size={13} />取消</button>
+          <button className="btn btn-primary" disabled={launching} onClick={launch}>{launching ? <Spinner light /> : <><Play size={13} />启动评测</>}</button>
         </div>
       </Modal>
 
@@ -260,8 +260,8 @@ export default function TaskDetailPage() {
           </div>
         )}
         <div className="flex justify-end gap-2 mt-4">
-          <button className="btn" onClick={() => setEditing(false)}>取消</button>
-          <button className="btn btn-primary" onClick={save}>保存</button>
+          <button className="btn" onClick={() => setEditing(false)}><X size={13} />取消</button>
+          <button className="btn btn-primary" onClick={save}><Save size={13} />保存</button>
         </div>
       </Modal>
 

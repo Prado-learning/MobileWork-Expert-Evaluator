@@ -1,4 +1,6 @@
 """Case 管理：对象导入后 AI 自动生成 case 集，人工审核（通过/拒绝/编辑）。"""
+import os
+
 from flask import Blueprint, jsonify, request
 
 import plugin_cli
@@ -78,6 +80,110 @@ def generate_cases(object_id):
     try:
         rows = conn.execute("SELECT * FROM cases WHERE object_id=?", (object_id,)).fetchall()
         return jsonify({"cases": [_serialize(r) for r in rows]}), 201
+    finally:
+        conn.close()
+
+
+@cases_bp.post("/objects/<int:object_id>/cases/import")
+def import_cases(object_id):
+    """导入 agent 已转换好的标准 case 列表（pending，走审核）。
+
+    body: {"cases": [{"title","type","prompt","output_dir","assertions",...}], "mode": "append|replace"}
+    转换由 agent 完成，本接口只校验并落库。
+    """
+    body = request.get_json(force=True) or {}
+    cases = body.get("cases")
+    if not isinstance(cases, list) or not cases:
+        return jsonify({"error": "cases 必须是非空数组（已转换的标准 case 列表）"}), 400
+    mode = body.get("mode") or "append"
+    if mode not in ("append", "replace"):
+        mode = "append"
+    try:
+        import json as _json
+        result = plugin_cli._run_expert(
+            "import-cases",
+            {"object-id": object_id, "cases": _json.dumps(cases, ensure_ascii=False), "mode": mode},
+            timeout=120,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"用例导入失败：{exc}"}), 500
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT * FROM cases WHERE object_id=?", (object_id,)).fetchall()
+        return jsonify({"imported": result.get("imported", 0), "cases": [_serialize(r) for r in rows]}), 201
+    finally:
+        conn.close()
+
+
+@cases_bp.post("/objects/<int:object_id>/cases/upload")
+def upload_cases_file(object_id):
+    """上传用例文件：保存到暂存区 + 写入 pending_imports（通知 AI 有待转换任务）。
+
+    body: {"content": "文件文本内容", "filename": "原文件名"}
+    返回 {saved_path, filename, size, pending_id}。
+    """
+    body = request.get_json(force=True) or {}
+    content = body.get("content") or ""
+    filename = (body.get("filename") or "case-upload.txt").strip()
+    if not content.strip():
+        return jsonify({"error": "文件内容为空"}), 400
+    try:
+        import config as _cfg
+        upload_dir = os.path.join(_cfg.DATA_DIR, "uploads", str(object_id))
+        os.makedirs(upload_dir, exist_ok=True)
+        safe_name = os.path.basename(filename) or "case-upload.txt"
+        path = os.path.join(upload_dir, safe_name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        # 写入待转换任务（agent 轮询/查询的"通知"信号）
+        conn = get_db()
+        try:
+            cur = conn.execute(
+                "INSERT INTO pending_imports (object_id, filename, saved_path, status) VALUES (?,?,?,'pending')",
+                (object_id, safe_name, path))
+            conn.commit()
+            pending_id = cur.lastrowid
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "saved_path": path, "filename": safe_name,
+                        "size": len(content), "pending_id": pending_id}), 201
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"文件保存失败：{exc}"}), 500
+
+
+@cases_bp.get("/objects/<int:object_id>/cases/pending-imports")
+def list_pending_imports(object_id):
+    """列出某对象待转换的用例文件（agent 据此感知"有文件待转换"）。"""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, filename, saved_path, status, note, created_at FROM pending_imports "
+            "WHERE object_id=? ORDER BY id DESC", (object_id,)).fetchall()
+        return jsonify([row_to_dict(r) for r in rows])
+    finally:
+        conn.close()
+
+
+@cases_bp.post("/cases/pending-imports/<int:pending_id>/status")
+def update_pending_import_status(pending_id):
+    """更新待转换任务状态（agent 转换完成后标记 done/failed）。"""
+    data = request.get_json(force=True) or {}
+    status = data.get("status") or "done"
+    note = data.get("note") or ""
+    if status not in ("pending", "converting", "done", "failed"):
+        return jsonify({"error": f"非法状态：{status}"}), 400
+    conn = get_db()
+    try:
+        if not conn.execute("SELECT id FROM pending_imports WHERE id=?", (pending_id,)).fetchone():
+            return jsonify({"error": "任务不存在"}), 404
+        if status == "done":
+            conn.execute(
+                "UPDATE pending_imports SET status=?, note=?, finished_at=datetime('now','localtime') WHERE id=?",
+                (status, note, pending_id))
+        else:
+            conn.execute("UPDATE pending_imports SET status=?, note=? WHERE id=?", (status, note, pending_id))
+        conn.commit()
+        return jsonify({"ok": True, "id": pending_id, "status": status})
     finally:
         conn.close()
 

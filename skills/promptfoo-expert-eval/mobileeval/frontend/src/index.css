@@ -13,9 +13,11 @@
     @apply bg-surface border border-hairline rounded-default p-4;
   }
   .btn {
-    @apply inline-flex items-center gap-1.5 rounded-default border border-hairline px-3 py-1.5 text-sm
-           text-ink bg-surface hover:bg-[#e8eaef] hover:border-[#d2d5da] active:bg-[#dfe2e8]
-           transition-colors cursor-pointer select-none;
+    @apply inline-flex items-center justify-center gap-1.5 rounded-default border border-hairline
+           px-3.5 text-sm font-medium leading-none text-ink bg-surface
+           hover:bg-[#e8eaef] hover:border-[#d2d5da] active:bg-[#dfe2e8]
+           transition-colors cursor-pointer select-none whitespace-nowrap;
+    height: 32px;
   }
   .btn-primary {
     @apply bg-accent text-white border-accent hover:bg-[#0f7ae0] active:bg-[#0c6ac4];
@@ -42,4 +44,11 @@
   .table-base { @apply w-full text-sm; }
   .table-base th { @apply text-left text-xs text-muted font-medium px-3 py-2 border-b border-hairline whitespace-nowrap; }
   .table-base td { @apply px-3 py-2 border-b border-hairline align-top; }
+  /* 方向箭头（<> 文本样式，无按钮边框） */
+  .dir-arrow {
+    @apply inline-flex items-center justify-center w-7 h-7 rounded-default text-lg leading-none
+           text-muted hover:text-ink hover:bg-page active:bg-[#e8eaef]
+           disabled:text-hairline disabled:pointer-events-none
+           transition-colors cursor-pointer select-none;
+  }
 }

@@ -498,6 +498,42 @@ def save_cases(object_id, cases, db_path=None, task_id=None, mode="replace"):
         conn.close()
 
 
+def import_cases(object_id, cases, task_id=None, mode="append", db_path=None):
+    """把（agent 已转换好的）标准 case 列表写入评测库。
+
+    - 输入：cases 为已转换的标准 case 数组（title/type/prompt/output_dir/assertions）；
+    - 落库为 pending 状态，走人工审核。
+    转换由调用方（agent）完成，本命令只做校验与落库。
+    返回 {"imported": n, "cases": [...]}。
+    """
+    if not isinstance(cases, list) or not cases:
+        raise RuntimeError("cases 必须是非空数组（已转换的标准 case 列表）")
+    normalized = []
+    for i, c in enumerate(cases, 1):
+        if not isinstance(c, dict):
+            continue
+        title = (c.get("title") or "").strip() or f"导入用例 {i}"
+        ctype = (c.get("type") or "hybrid").strip().lower()
+        if ctype not in ("structured", "hybrid", "open_ended"):
+            ctype = "hybrid"
+        prompt = (c.get("prompt") or "").strip()
+        if not prompt:
+            continue
+        normalized.append({
+            "case_id": (c.get("case_id") or f"imp-{i}").strip(),
+            "title": title,
+            "type": ctype,
+            "dimension": (c.get("dimension") or "").strip(),
+            "prompt": prompt,
+            "output_dir": (c.get("output_dir") or f"eval-runs/{{run_id}}/imp-{i}").strip(),
+            "assertions": c.get("assertions") or [],
+        })
+    if not normalized:
+        raise RuntimeError("cases 中没有有效用例（缺少 title/prompt 或格式不正确）")
+    n, tid = save_cases(object_id, normalized, db_path=db_path, task_id=task_id, mode=mode)
+    return {"imported": n, "task_id": tid, "cases": normalized}
+
+
 def review_cases(object_id, action="approve", scope="all", case_ids=None, note="", db_path=None):
     """批量审核用例。action=approve|reject；scope=all|selected。返回 {updated, cases}。"""
     init_db(db_path)
@@ -703,29 +739,55 @@ def _resolve_agents_dir(source_type, source_path):
     raise RuntimeError(f"未知 source-type：{source_type}（支持 global|workspace）")
 
 
-def _pick_agent_files(agents_dir, name):
-    """按名称挑 agent .md 文件。name 匹配某 agent → 单专家；否则视为专家团（全部）。
+def _agent_mode(agents_dir, fname):
+    """读取 agent .md 的 frontmatter mode 字段（all=团长/subagent=团员；缺省空）。"""
+    try:
+        with open(os.path.join(agents_dir, fname), encoding="utf-8") as fh:
+            head = fh.read(1200)
+        for line in head.splitlines():
+            s = line.strip().lower()
+            if s.startswith("mode:"):
+                m = s.split(":", 1)[1].strip()
+                return m if m in ("all", "primary", "subagent") else ""
+    except OSError:
+        pass
+    return ""
 
+
+def _pick_agent_files(agents_dir, name):
+    """按名称挑 agent .md 文件。name 匹配团长 → 专家团（全部）；匹配团员 → 单专家。
+
+    团长识别：frontmatter `mode: all`/`primary`；无 mode 时回退旧约定
+    `software-team-lead`（兼容无 frontmatter 的旧专家包）。
     返回 (md_files, is_team)。
     """
     mds = sorted(f for f in os.listdir(agents_dir)
                  if f.endswith(".md") and not f.startswith("."))
     if not mds:
         raise RuntimeError(f"agents 目录 {agents_dir} 没有 .md 文件")
+    leads = [f for f in mds
+             if _agent_mode(agents_dir, f) in ("all", "primary")
+             or os.path.splitext(f)[0] == "software-team-lead"]
+    if not leads:
+        # 没有显式团长：整目录只有 1 个 agent 时视为单专家，否则需指定名称
+        if len(mds) == 1:
+            leads = mds
     if name:
         exact = [f for f in mds if os.path.splitext(f)[0] == name]
         if exact:
             # 指定团长且存在团员 → 导入整个团队；否则单专家
-            if name in ("software-team-lead",) and len(mds) > 1:
+            if exact[0] in leads and len(mds) > 1:
                 return mds, True
             return exact, False
         # 名称不精确匹配单个 agent：看是否匹配团长（则导入整个团队）
-        if name in ("software-team-lead",) or "software-team-lead.md" in mds:
+        if name in (os.path.splitext(f)[0] for f in leads):
             return mds, True
         raise RuntimeError(f"未找到专家/专家团「{name}」，可用 agent：{', '.join(os.path.splitext(f)[0] for f in mds)}")
-    # 无名称：存在团长 → 导入整个团队；否则报错提示
-    if any(os.path.splitext(f)[0] == "software-team-lead" for f in mds):
+    # 无名称：存在团长 → 导入整个团队；否则单专家
+    if leads and len(mds) > 1:
         return mds, True
+    if len(mds) == 1:
+        return mds, False
     raise RuntimeError(f"未指定专家名；可用 agent：{', '.join(os.path.splitext(f)[0] for f in mds)}")
 
 
@@ -741,7 +803,18 @@ def import_expert(name, source_type="global", source_path=None, db_path=None):
     init_db(db_path)
     agents_dir, assets_dir = _resolve_agents_dir(source_type, source_path)
     md_files, is_team = _pick_agent_files(agents_dir, name)
-    display_name = name or ("软件专家团" if is_team else os.path.splitext(md_files[0])[0])
+    # 团队名：显式 name > 包目录名（agents 上一级 .opencode 的父目录）；单专家用文件名
+    if name:
+        display_name = name
+    elif is_team:
+        pkg_dir = os.path.basename(os.path.dirname(os.path.dirname(agents_dir)))
+        display_name = pkg_dir or "专家团"
+    else:
+        display_name = os.path.splitext(md_files[0])[0]
+    # 团长名（评测 agent 入口）：mode: all/primary 的 agent；无则软件团队默认
+    lead_name = next((os.path.splitext(f)[0] for f in md_files
+                      if _agent_mode(agents_dir, f) in ("all", "primary")),
+                     "software-team-lead" if is_team else os.path.splitext(md_files[0])[0])
     # 工作区必须落在权威项目根（与 web 同库）：从 resolve_db 反推，不用模块级 PROJECT_ROOT
     # （安装副本场景 PROJECT_ROOT 推导错位，会把工作区建到 ~/MobileEval）
     ws_root = os.path.join(resolve_project_home(db_path), "eval-data", "workspaces", display_name)
@@ -767,7 +840,7 @@ def import_expert(name, source_type="global", source_path=None, db_path=None):
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] 权限配置写入失败：{exc}", file=sys.stderr)
     # 创建对象记录
-    agent_name = "software-team-lead" if is_team else os.path.splitext(md_files[0])[0]
+    agent_name = lead_name
     conn = get_db(db_path)
     try:
         # 同名对象已存在：更新工作区指针（重新导入）
@@ -1062,6 +1135,14 @@ def main(argv=None):
                       help="replace=覆盖未审核（默认）| append=直接追加")
     p_gc.add_argument("--db-path", default=None)
 
+    p_ic = sub.add_parser("import-cases", help="把已转换的标准 case 列表写入评测库（转换由调用方完成）")
+    p_ic.add_argument("--object-id", type=int, required=True, help="挂载对象")
+    p_ic.add_argument("--cases", default="", help="已转换的标准 case JSON 数组字符串")
+    p_ic.add_argument("--task-id", type=int, default=None)
+    p_ic.add_argument("--mode", default="append", choices=["append", "replace"],
+                      help="默认 append（不清除旧用例）；replace=覆盖未审核")
+    p_ic.add_argument("--db-path", default=None)
+
     p_gcp = sub.add_parser("generate-case-plan", help="生成评测 case 概要（供用户确认，不写库）")
     p_gcp.add_argument("--workspace", required=True)
     p_gcp.add_argument("--agent", default="software-team-lead")
@@ -1153,6 +1234,9 @@ def main(argv=None):
                    "hint": "用 open --page=object --object-id=<id> 打开页面查看 case"})
         else:
             _emit(cases)
+    elif args.cmd == "import-cases":
+        cases = json.loads(args.cases) if args.cases else []
+        _emit(import_cases(args.object_id, cases, args.task_id, args.mode, args.db_path))
     elif args.cmd == "generate-case-plan":
         plan = generate_case_plan(args.workspace, args.agent,
                                   {"name": args.name, "description": args.description}, args.count)

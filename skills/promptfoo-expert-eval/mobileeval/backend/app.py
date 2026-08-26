@@ -27,9 +27,11 @@ def create_app():
     from api.expert import expert_bp
     from api.experiments import experiments_bp
     from api.models_api import models_bp
+    from api.expert_manager_bridge import bridge_bp
 
     for bp in (tasks_bp, objects_bp, runs_bp, reports_bp, reviews_bp, assistant_bp,
-               cases_bp, fs_bp, uploads_bp, expert_bp, experiments_bp, models_bp):
+               cases_bp, fs_bp, uploads_bp, expert_bp, experiments_bp, models_bp,
+               bridge_bp):
         app.register_blueprint(bp, url_prefix="/api")
 
     @app.get("/api/health")

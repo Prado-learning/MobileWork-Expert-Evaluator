@@ -1,0 +1,520 @@
+{
+  "skill_name": "mobilework-expert-manager",
+  "evals": [
+    {
+      "id": 1,
+      "name": "single-expert-json-package",
+      "prompt": "把临时用户主目录和临时 cwd 设为两个不同目录，不注入 MobileWork 宿主合同，也不传 --output-dir 或 --my-experts，从 references/expert-json-spec.md 的 expert-json 模板块取得模板并生成一个 MobileWork 单专家项目包。",
+      "expected_output": "A type: expert package generated only under <cwd>/<slug> with expert.json, README.md, runtime config JSON, one primary agent, and local skills; the workspace root configuration is unchanged and nothing is written to the user's my-experts directory.",
+      "files": [],
+      "expectations": [
+        "Runs check_environment.py, reads hostMode=workspace, and creates the package only under <cwd>/<slug>.",
+        "Does not modify root .opencode, opencode.json or mobilework.jsonc and writes to neither <home>/.mobilework/experts/personal nor the legacy migration-only <home>/.mobilework/my-experts directory.",
+        "Creates expert.json as the only package manifest.",
+        "Creates exactly one primary agent and no subagent entries.",
+        "Generated single expert Markdown frontmatter includes name, displayName, profession, steps, mode, color, and permission, and does not emit maxTurns.",
+        "Generated single expert Markdown includes core capabilities, trigger scenarios, workflow, output format, and quality gates.",
+        "Generated single expert Markdown does not include TeamCreate, SendMessage, subagent_type, or task_id delegation rules.",
+        "Preserves avatar_url, tags, quick_prompts, default_prompt, profession, and category_id in expert.json and generated prompts.",
+        "Creates package-local avatars files for the top-level expert and the single expert agent when local avatar files are missing.",
+        "All local avatar_url values in expert.json resolve to files inside the generated package.",
+        "Generated single expert Markdown frontmatter avatar_url matches expert.json agent.avatar_url.",
+        "Creates common and role-specific skill directories.",
+        "Generated expert.json and runtime config JSON validate as JSON.",
+        "Does not create package-level AGENTS.md; workspace-wide custom instructions are owned only through declared .opencode/instructions files and opencode.json.instructions.",
+        "Creates README.md generated from expert.json using MobileWork Chinese introduction sections.",
+        "Single expert README includes 类型, 功能, 专家能力, 工作流程, 内置技能, 使用示例, 包结构, 运行时扩展, and 注意事项.",
+        "Generated README.md, common skill, role skill, and agent Markdown use Chinese framework text by default.",
+        "README.md does not contain old English skeleton headings such as Generated MobileWork or Public Shape.",
+        "Does not create extra root-level config or hidden directories."
+      ]
+    },
+    {
+      "id": 2,
+      "name": "expert-team-json-package",
+      "prompt": "把临时用户主目录和临时 cwd 设为两个不同目录，不注入 MobileWork 宿主合同，也不传 --output-dir 或 --my-experts，将 evals/files/software-dev-team.expert.json 复制为临时 expert.json 后生成一个 MobileWork 专家团项目包。",
+      "expected_output": "A type: team package generated only under <cwd>/<slug> with one primary agent, multiple subagents, expert.json, README.md, runtime config JSON, local skills, and workflow routing; the workspace root configuration and user my-experts directory remain unchanged.",
+      "files": [],
+      "expectations": [
+        "Runs check_environment.py, reads hostMode=workspace, and creates the package only under <cwd>/<slug> without changing workspace root configuration.",
+        "Creates one primary agent and at least four subagent markdown files.",
+        "Primary and subagent Markdown frontmatter plus opencode.json agent entries include the correct steps values and do not emit maxTurns.",
+        "Primary agent includes team roster, direct routing table, declared workflows, task collaboration rules, forbidden behaviors, and task.subagent_type examples for declared subagent ids.",
+        "Primary agent explains how to retain returned task_id values and resume the same task for failed acceptance checks; every subagent returns through its task result.",
+        "Primary agent explains serial versus parallel routing and failed-branch re-dispatch.",
+        "Subagent Markdown forbids further delegation and direct user-facing final output, and returns evidence plus acceptance criteria status through its task result.",
+        "No generated team Markdown contains TeamCreate or SendMessage, and the package passes the current validator before and after zip extraction.",
+        "Creates package-local avatars files for the team, the primary agent, and every subagent when local avatar files are missing.",
+        "All local avatar_url values in expert.json resolve to files inside the generated package.",
+        "Every generated agent Markdown frontmatter avatar_url matches the corresponding primary_agent or subagents[] avatar_url.",
+        "Creates role-specific skills declared in expert.json.",
+        "Does not create package-level AGENTS.md; workspace-wide custom instructions are owned only through declared .opencode/instructions files and opencode.json.instructions.",
+        "Creates README.md generated from expert.json using MobileWork Chinese introduction sections.",
+        "Team README includes 类型, 功能, 团队角色, 工作流程, 内置技能, 使用示例, 包结构, 运行时扩展, and 注意事项.",
+        "Generated README.md, common skill, role skill, and agent Markdown use Chinese framework text by default.",
+        "README.md does not contain old English skeleton headings such as Generated MobileWork or Public Shape.",
+        "Does not create extra root-level config or hidden directories."
+      ]
+    },
+    {
+      "id": 3,
+      "name": "manifest-required",
+      "prompt": "检查一个包：它没有 expert.json，但根目录有不支持的额外配置文件。应该指出当前包结构缺少 expert.json，不要从其他根文件推断配置。",
+      "expected_output": "A validation failure explaining that expert.json is required and unsupported root config files are not part of the current package structure.",
+      "files": [],
+      "expectations": [
+        "Rejects packages missing expert.json.",
+        "Rejects unsupported root-level config files.",
+        "Does not create a partial generated package."
+      ]
+    },
+    {
+      "id": 4,
+      "name": "invalid-type-shape",
+      "prompt": "检查一个 expert.json：type 是 expert 但同时写了 subagents；另一个 type 是 team 但没有 subagents。应该失败。",
+      "expected_output": "Validation errors for expert/team structural mismatch.",
+      "files": [],
+      "expectations": [
+        "Rejects type expert with subagents or primary_agent.",
+        "Rejects type team without at least one subagent.",
+        "Reports the exact invalid structural field."
+      ]
+    },
+    {
+      "id": 5,
+      "name": "workflow-reference-validation",
+      "prompt": "检查一个专家团 expert.json：workflows[].phases[].agents 引用了不存在的 agent id。应该失败。",
+      "expected_output": "Validation error for workflow phase references to undeclared agent ids.",
+      "files": [],
+      "expectations": [
+        "Validates workflow phase mode.",
+        "Rejects workflow phases that reference unknown agents.",
+        "Allows primary-only phases when mode is primary and agents is empty."
+      ]
+    },
+    {
+      "id": 6,
+      "name": "mcp-placeholder-policy",
+      "prompt": "生成一个带远程 MCP 和本地 MCP 的专家团，但所有 MCP 都先占位禁用。",
+      "expected_output": "A runtime config JSON with local and remote MCP definitions where enabled is false.",
+      "files": [],
+      "expectations": [
+        "Remote MCP entry includes type remote and a URL placeholder.",
+        "Local MCP entry includes type local and command array placeholder.",
+        "All generated MCP entries include enabled false unless expert.json explicitly says otherwise.",
+        "Validator rejects generated packages if MCP enabled values differ from expert.json."
+      ]
+    },
+    {
+      "id": 12,
+      "name": "runtime-extensions-full-package",
+      "prompt": "从 references/expert-json-spec.md 的 expert-json 模板块创建一个可真实运行的单专家包：expert.json.runtime_extensions 同时声明 commands、带非空源码的 custom_tools、plugins.npm、plugins.local、plugins.package_json、reference_files 及其 local references alias、一个带 branch/description/hidden 的 Git repository reference、instruction_files 及其 instructions glob、LSP；expert.json.mcp_servers 声明一个使用 {env:MOBILEWORK_EVAL_TOKEN} 的远程 MCP。为每个 local 声明提供真实 backing file 和非空内容，生成后校验包、解析 expert.json/opencode.json/.env.example，安装到临时 workspace，再检查所有资源落位、alias、环境变量占位和安装配置投影。安装后读回 contract 3 receipt；只有 evaluator 明确提供固定 sidecar 与显式 target/host contract 时才运行 verify_trusted_config.py，否则必须保持 config-loadable 为 not verified 并说明缺失证据。",
+      "expected_output": "A generated, validated, and installed single-expert package where every declared runtime extension has a real package-local backing file, aliases and environment placeholders are exact, and the installed .opencode projection contains no unresolved placeholders or foreign-host leakage.",
+      "files": [],
+      "expectations": [
+        "Creates .opencode/commands/<name>.md for each runtime_extensions.commands entry.",
+        "Creates non-empty .opencode/tools/*.js or *.ts files from every runtime_extensions.custom_tools entry.",
+        "Creates non-empty .opencode/plugins/*.js or *.ts files and .opencode/package.json when plugins.local and plugins.package_json are declared; opencode.json.plugin contains only declared npm package names because local plugins are auto-discovered.",
+        "Creates the exact files declared by reference_files under .opencode/references/<slug>/<alias>/ and by instruction_files under .opencode/instructions/<slug>/, and creates no root references/ or instructions/ directories.",
+        "Namespaces each generated opencode.json reference alias as <slug>-<alias>; local reference paths resolve to declared package-local backing files, the Git entry preserves repository/branch/description/hidden, instructions contain only declared instruction files, and plugin plus lsp entries are emitted only because they were declared.",
+        "Preserves {env:MOBILEWORK_EVAL_TOKEN} in the generated remote MCP configuration, emits enabled exactly as declared, and creates .env.example containing exactly MOBILEWORK_EVAL_TOKEN=<required> with no real secret.",
+        "Generated expert.json, opencode.json, command Markdown, tool/plugin source, references, and instructions contain no unresolved [TODO], empty template/source/file bodies, or empty required placeholder values.",
+        "Generated package content contains no WorkBuddy/CodeBuddy host leakage such as .codebuddy-plugin, plugin.json, WORKBUDDY_CONFIG_DIR, TeamCreate, or SendMessage.",
+        "install_expert.py copies commands, tools, plugins, references, instructions, package.json, and the MCP configuration into the workspace .opencode projection.",
+        "install_expert.py merges agent, mcp, plugin, references, instructions, and lsp into .opencode/opencode.jsonc; reference aliases remain <slug>-<alias>, reference paths rebase under references/<slug>/<alias>, and instruction globs rebase under .opencode/instructions/<slug>.",
+        "install_expert.py writes a contract 3 .opencode/.expert-installs/<slug>.json with all six package/manifest/manager/target/projection evidence fields; verify_trusted_config.py requires that same package, installed workspace, explicit target contract, and caller-supplied sidecar before config-loadable, while repository pinning is proven separately by the host/evaluator."
+      ]
+    },
+    {
+      "id": 13,
+      "name": "runtime-extensions-portability-rejections",
+      "prompt": "检查 runtime_extensions 负例：custom_tools 或 plugins 使用绝对路径或 ..；reference 使用字符串简写、同时或都不声明 path/repository、local 带 branch、未知字段、错误 hidden 类型、单文件路径、没有 backing file 或存在无人拥有的 reference_files；instruction 使用 HTTP 或不匹配声明文件；包内出现根级 references/instructions、symlink、node_modules 或 .env。应该校验失败并指出原因。",
+      "expected_output": "Validation failures that reject non-portable paths, missing backing files, secret-like content, and non-distributable artifacts in runtime extension resources.",
+      "files": [],
+      "expectations": [
+        "Rejects absolute paths and .. path escapes in runtime extension file paths.",
+        "Rejects local references without matching reference_files entries.",
+        "Rejects reference string shorthand, invalid path/repository one-of sources, local branch, unknown fields, invalid hidden types, single-file local paths, local references without backing files, and orphan reference_files.",
+        "Rejects local instructions without matching instruction_files entries and rejects remote HTTP instructions.",
+        "Rejects root references/ and instructions/ directories and every symlink.",
+        "Rejects secret-like content inside custom tools, plugins, references, instructions, and .opencode/package.json.",
+        "Rejects node_modules, .env, caches, logs, .git, .serena, and bytecode in generated packages."
+      ]
+    },
+    {
+      "id": 7,
+      "name": "permission-consistency",
+      "prompt": "生成专家团包后，检查每个 agent 的 .md frontmatter permission 和运行时配置里的 permission 完全一致。",
+      "expected_output": "A generated package where each agent's Markdown frontmatter permission matches runtime config agent.<id>.permission.",
+      "files": [],
+      "expectations": [
+        "Validator checks permission consistency.",
+        "Primary task permissions allow declared subagents.",
+        "Subagents remain unable to call sibling agents by default.",
+        "Legacy tools boolean is not recommended for new manifests."
+      ]
+    },
+    {
+      "id": 8,
+      "name": "avatar-assets-policy",
+      "prompt": "验证头像资源策略：已有本地头像要复制到包内 avatars，--force 从已有包内 expert.json 重建不能丢头像；HTTPS 头像不要求本地文件而 HTTP 必须失败；越界、断链和 agent Markdown avatar_url 与 expert.json 不一致都应该失败。",
+      "expected_output": "Avatar asset generation and validation cover local copy, force preservation, HTTPS passthrough, HTTP rejection, path safety, content validation, missing files, and frontmatter consistency.",
+      "files": [],
+      "expectations": [
+        "Copies existing local relative avatar files into package-local avatars paths and updates expert.json accordingly.",
+        "Preserves copied avatar bytes when regenerating with --force from an expert.json inside the existing package.",
+        "Keeps HTTPS avatar_url values without requiring a local avatar file while still creating the avatars directory and rejects HTTP avatar URLs.",
+        "Rejects absolute avatar paths or paths containing .. during generation or validation.",
+        "Rejects local avatar_url values that point to missing package files.",
+        "Rejects generated packages where an agent Markdown frontmatter avatar_url differs from the matching expert.json role avatar_url.",
+        "Avoids overwriting different avatar bytes when package and agent avatar target names would otherwise collide.",
+        "Accepts PNG, JPEG, WebP, GIF, and safe SVG up to 2 MiB, validates raster magic bytes, and rejects unsafe SVG or unreferenced avatar files."
+      ]
+    },
+    {
+      "id": 9,
+      "name": "source-material-conversion",
+      "prompt": "根据一份产品交付流程资料，把它转成 MobileWork expert.json：可以是单专家，也可以是专家团。先提取角色、展示字段和 SOP，再让我确认。",
+      "expected_output": "The skill converts source material into a draft expert.json with public fields, roles, workflows, quality gates, and waits for confirmation.",
+      "files": [],
+      "expectations": [
+        "Separates source facts from inferred expert structure.",
+        "Maps display information into name, summary, description, avatar_url, tags, quick_prompts, default_prompt, profession, and category_id.",
+        "Normalizes user-visible host product or platform narrative from source material into MobileWork wording before showing the draft expert.json.",
+        "Preserves runtime-critical identifiers such as slug, agent ids, skill names, MCP names, file paths, directory names, command paths, APIs, and third-party business-system names.",
+        "Keeps HTTPS avatar URLs as display URLs and maps missing or local avatar assets to generated package-local avatars while rejecting HTTP.",
+        "Chooses type expert or type team from actual role structure.",
+        "Maps SOP steps into agent.workflow or top-level workflows[].phases[].",
+        "Shows a complete expert.json draft and waits for confirmation before generating files."
+      ]
+    },
+    {
+      "id": 10,
+      "name": "portable-package-path-policy",
+      "prompt": "检查一个专家包：expert.json、opencode.json 或 skill 文档中含有 /Users/xiaodong、~/.agents、.agents/skills 或本地 checkout 路径。应该校验失败，并指出这些路径不能进入可分发专家包。",
+      "expected_output": "The validator rejects non-portable developer-machine paths and explains that package resources must use package-relative paths or placeholders.",
+      "files": [],
+      "expectations": [
+        "Rejects developer home absolute paths.",
+        "Rejects global agent skill paths such as ~/.agents or .agents/skills.",
+        "Rejects local checkout paths embedded in expert package files.",
+        "Allows package-relative paths for resources inside .opencode/skills and placeholders for external inputs."
+      ]
+    },
+    {
+      "id": 14,
+      "name": "portable-runtime-artifact-path-policy",
+      "prompt": "检查一个专家运行结果目录：专家脚本是用绝对 --input、--output-dir 和 --workspace-root 参数运行的，但 summary.json、审计报告、Markdown 摘要和 Excel 汇总 Sheet 里不应该出现 /Users/xiaodong、~/.agents、.agents/skills 或本地 checkout 路径。",
+      "expected_output": "Runtime artifacts keep display paths package/workspace-relative and scan_portable_artifacts.py fails on developer-machine paths inside JSON, Markdown, logs, or Excel cells.",
+      "files": [],
+      "expectations": [
+        "Supports scanning runtime artifact directories in addition to package files.",
+        "Scans JSON, Markdown, text-like files, and Excel workbook string cells.",
+        "Rejects developer home absolute paths inside runtime artifacts.",
+        "Rejects global agent skill paths such as ~/.agents or .agents/skills inside runtime artifacts.",
+        "Rejects local checkout paths and .. path escapes inside runtime artifacts.",
+        "Allows expert workspace-relative paths such as testcase/input/file.xlsx and testcase/output/report.json."
+      ]
+    },
+    {
+      "id": 11,
+      "name": "distributable-zip-package",
+      "prompt": "将一个已通过校验的专家包打包为 zip，要求 zip 根目录只包含一个 <slug>/ 目录，且不包含缓存、字节码、.env、node_modules、.git 或真实密钥。",
+      "expected_output": "package_expert.py validates the package, creates a distributable zip, verifies it with unzip -t, and the extracted package validates again.",
+      "files": [],
+      "expectations": [
+        "Runs validate_expert.py before creating the zip.",
+        "Creates <slug>.zip with a single top-level package directory.",
+        "Excludes non-distributable cache, bytecode, node_modules, .git, .env, logs, and OS metadata.",
+        "The zip passes unzip -t and the extracted package validates."
+      ]
+    },
+    {
+      "id": 15,
+      "name": "require-explicit-safe-custom-output-selection",
+      "prompt": "在已确认业务卡和位置 question 回答之后测试自定义创建目录。先只传 --output-dir <existing-custom-parent>，再显式传 --creation-target custom --output-dir <existing-custom-parent>；同时覆盖相对路径、缺失目录、文件系统根、symlink、Windows reparse point 和特殊文件。",
+      "expected_output": "Assertion-only --output-dir remains rejected, while explicit custom mode accepts only an existing safe absolute parent and creates <parent>/<slug> after the location question reply.",
+      "files": [],
+      "expectations": [
+        "With no --creation-target, treats --output-dir as assertion-only, reports OUTPUT_ROOT_MISMATCH for an arbitrary parent and performs no package write.",
+        "Accepts the same existing absolute directory only with --creation-target custom, maps the final target to <parent>/<slug>, and does not write to workspace or my-experts.",
+        "Reports CREATION_TARGET_PATH_INVALID and performs no preflight or generator write for a relative path, missing directory, filesystem root, symlink, Windows reparse point, special file or path escape.",
+        "Keeps overwrite authorization separate: an existing <parent>/<slug> still requires the independent --force confirmation."
+      ]
+    },
+    {
+      "id": 16,
+      "name": "runtime-artifact-location-contract",
+      "prompt": "检查一个专家的落盘设计：它把本次业务校验报告写到了 <workspace>/.opencode/workspace/run-001。请指出问题并给出正确的默认产物目录和扫描方式，同时不要误删或否定专家包内合法的 .opencode 资源。",
+      "expected_output": "The review rejects the business artifact location, recommends <workspace>/校验输出/<run-id>, preserves distributable package resources under .opencode, and validates the artifact root with --workspace-root.",
+      "files": [],
+      "expectations": [
+        "Identifies <workspace>/.opencode/workspace/run-001 as an invalid business artifact location under an engine directory.",
+        "Recommends <workspace>/校验输出/<run-id> as the default business artifact directory.",
+        "Preserves legitimate package resources under package-local .opencode/agents, .opencode/skills, commands, tools, and plugins.",
+        "Uses scan_portable_artifacts.py --workspace-root <workspace> <artifact-dir> to validate the runtime artifact location and content."
+      ]
+    },
+    {
+      "id": 17,
+      "name": "unified-skill-resources-and-atomic-force",
+      "prompt": "给合同审查专家的 managed skill 增加一个 templates/input.xlsx 和一个 scripts/check.py，并把包括 SKILL.md 在内的全部文件用 package_resources 和 SHA-256 声明后 --force 重建；随后测试正确 hash、错误 hash、未声明资源和生成中途失败。",
+      "expected_output": "The generator preserves every declared unified-skill byte, rejects mismatches and undeclared resources, and leaves the original package unchanged on failed regeneration.",
+      "files": [],
+      "expectations": [
+        "Accepts text or binary package_resources only inside top-level skills[] subtrees and requires every SKILL.md to be declared.",
+        "Treats declared skill resources such as templates/input.xlsx as legal business templates and does not confuse them with removed source-skill .tmpl rendering files.",
+        "Validates every provided digest and writes calculated lowercase SHA-256 values to generated expert.json.",
+        "Copies all declared skill bytes exactly and validator rejects changed content or any undeclared skill file.",
+        "Rebuilds with sibling staging and atomically replaces the package only after complete validation.",
+        "A failed --force run leaves the pre-existing package byte-for-byte unchanged."
+      ]
+    },
+    {
+      "id": 18,
+      "name": "installer-ownership-and-rollback",
+      "prompt": "在临时 workspace 依次安装两个专家，验证 references/instructions 路径重写、package.json 依赖与 LSP 合并；再测试同 slug --force、跨 slug 路径冲突、依赖版本冲突和模拟写入失败回滚。为 ownership gate 使用互相隔离的 workspace 副本，分别制造 only-owned-file、only-owned-config 和 only-owned-dependency drift；在同一未变化的漂移副本连续运行两次以比较 preview SHA-256，并核对失败前后全部 workspace bytes。另用 clean contract 1 与 contract 2 receipt 各执行一次无漂移升级，读回新的 contract 3 evidence fields。",
+      "expected_output": "The CLI installs into .opencode with contract 3 receipts, permits only clean same-slug upgrades, refuses drift with a stable preview and zero writes, protects cross-slug ownership, and restores the workspace after transactional failure.",
+      "files": [],
+      "expectations": [
+        "Installs configuration at .opencode/opencode.jsonc and records .opencode/.expert-installs/<slug>.json.",
+        "Rebases references to config-relative references/<slug>/<alias> and instructions to workspace-relative .opencode/instructions/<slug> patterns.",
+        "Merges dependencies by package name and LSP by server name, and rejects different versions of the same dependency before writing.",
+        "Allows --force only when every same-slug receipt-owned file, config value, list item, scalar LSP value, and dependency is unchanged; drift returns INSTALL_OWNED_STATE_DRIFT, exit 1, a stable redacted preview SHA-256, and leaves all workspace bytes unchanged.",
+        "Writes contract 3 receipts with packageTreeSha256, manifestSha256, managerContractSha256, targetOpenCodeVersion, targetCapabilitiesSha256, and projectionSha256 after fresh installs and clean contract 1/2 upgrades.",
+        "Rejects paths or config keys owned by another slug and preserves unrelated user additions.",
+        "Restores all prior files and config after a simulated transactional write failure."
+      ]
+    },
+    {
+      "id": 19,
+      "name": "strict-package-security",
+      "prompt": "对专家包做严格负向校验和打包：根级 references/instructions、symlink、路径逃逸、未声明文件、reference 内容漂移、伪造 PNG、含脚本或外部引用的 SVG 都必须失败；修复后 zip 只应含 allowlist 文件。",
+      "expected_output": "Validator and packager independently reject unsafe or undeclared package content, while the corrected package validates before and after zip extraction.",
+      "files": [],
+      "expectations": [
+        "Rejects every symlink before reading or packaging its target.",
+        "Rejects root references/instructions, path escapes, unallowlisted files, undeclared resources, and reference/instruction content drift.",
+        "Validates raster magic bytes and rejects SVG script, event attributes, foreignObject, and external references.",
+        "Packager applies its own strict allowlist and symlink check instead of relying only on validator output.",
+        "The corrected zip passes unzip -t and extracted validation."
+      ]
+    },
+    {
+      "id": 20,
+      "name": "opencode-native-single-expert-authoring",
+      "prompt": "创建一个 API 合规审查单专家，使用完整名称 api-compliance-check 的 managed skill，内含 SKILL.md、references/rules.md 与 scripts/check.py，并为远程 MCP 使用 {env:API_TOKEN}。生成到指定临时目录后检查 agent、skill、README、opencode.json 和 .env.example。",
+      "expected_output": "A single-expert package whose exact managed skill is declared byte-for-byte and assigned to the sole Agent, and whose environment placeholder is documented without a real secret.",
+      "files": [],
+      "expectations": [
+        "Agent description explains both capability and concrete trigger conditions and matches opencode.json.",
+        "The skill directory and existing frontmatter use the exact api-compliance-check name without an expert or Agent prefix.",
+        "package_resources declares SKILL.md, references/rules.md and scripts/check.py with matching hashes, without rewriting their bytes.",
+        "opencode.json includes the official schema and .env.example contains only API_TOKEN=<required>.",
+        "README includes a configuration and environment variables section without a real secret or another host's settings format."
+      ]
+    },
+    {
+      "id": 21,
+      "name": "opencode-native-team-agent-routing",
+      "prompt": "创建一个产品交付专家团：团长负责跨角色编排和验收，团员包括产品经理、架构师和 QA。为每个角色写清触发场景、工作流、输出合同、异常处理和 skill；保持现有默认权限，但团员不得继续 task 委派。",
+      "expected_output": "A team package with route-aware OpenCode agent descriptions, structured prompts, progressive-disclosure skills, unchanged permissive defaults, and strict task routing boundaries.",
+      "files": [],
+      "expectations": [
+        "Primary description targets cross-role orchestration and each subagent description targets its own route triggers.",
+        "Every agent body includes trigger/non-applicable scenarios, workflow, explicit output expectations, quality gates, and failure handling.",
+        "Primary keeps task.subagent_type and task_id rework semantics while subagents keep permission.task set to deny all.",
+        "Existing default edit, bash, and webfetch permissions remain allowed unless the manifest explicitly narrows them.",
+        "Each exact skill name is assigned only to its intended role, and permission.skill is derived from those references."
+      ]
+    },
+    {
+      "id": 22,
+      "name": "source-conversion-authoring-quality",
+      "prompt": "把一份包含旧宿主插件目录、agent 说明、skill 文档、环境变量配置和 SOP 的资料转成 MobileWork expert.json 草案。保留业务能力，但不要复制 .claude-plugin、${CLAUDE_PLUGIN_ROOT}、.claude/*.local.md 或 XML agent examples；说明这些内容在 OpenCode 包里分别如何落位。",
+      "expected_output": "A MobileWork expert.json draft and mapping explanation that preserves useful authoring principles while using only current OpenCode/MobileWork structures and existing manifest fields.",
+      "files": [],
+      "expectations": [
+        "Uses existing description, route_triggers, quick_prompts, workflows, permission, runtime_extensions, mcp_servers, and package_resources fields without inventing settings schema.",
+        "Maps agents to .opencode/agents and complete source skills to .opencode/skills without renaming or rewriting uploaded content.",
+        "Maps configuration to opencode.json and {env:VARIABLE}, with placeholder-only .env.example guidance.",
+        "Rejects copying .claude-plugin, ${CLAUDE_PLUGIN_ROOT}, .claude local settings, or XML example blocks into generated frontmatter.",
+        "Keeps expert.json as the source of truth, treats README, opencode.json and agents as derived artifacts, and treats declared skill bytes as owned inputs; root AGENTS.md is not package-owned."
+      ]
+    },
+    {
+      "id": 23,
+      "name": "unified-skill-pool-and-assignment",
+      "prompt": "创建一个合同审查专家和一个软件开发专家团。使用顶层 skills[] 声明技能完整名称、origin 和 edit_policy，角色只引用完整名称；单专家自动分配上传技能，专家团分别测试指定一个、多个和 --all-members，同时检查 schema 混用、未知技能、未知 Agent、手写 permission.skill 与缺失文件 hash。",
+      "expected_output": "The generator and importer use one exact unified skill catalog, derive per-role permissions, and reject every mixed, unknown or divergent declaration.",
+      "files": [],
+      "expectations": [
+        "Allows an empty top-level skills[] and empty role skills[], while every non-empty role reference names an exact top-level skill.",
+        "Never invents <slug>-common or <slug>-<agent-id> prefixes and never rewrites uploaded SKILL.md content.",
+        "Writes exact names consistently to directories, Agent Markdown, README, derived runtime permission.skill, and package_resources validation.",
+        "Rejects mixed skills/common_skills schemas, duplicate or unknown skill names, unknown Agent IDs and explicit permission.skill in unified manifests.",
+        "Expands --all-members to the team leader and every member, while a single expert auto-assigns without an Agent flag."
+      ]
+    },
+    {
+      "id": 24,
+      "name": "agent-runtime-options-contract",
+      "prompt": "对单专家和专家团分别生成 steps、model、variant、hidden 与 options 投影；验证 temperature/top_p 禁止规则、旧包只读 warning、兼容步数别名、非法值、派生配置漂移、安装升级删除选项和干净解压复验。",
+      "expected_output": "One shared manifest contract controls generator and validator behavior, supported Agent runtime options survive generation, installation and packaging, and sampling fields cannot enter newly generated packages.",
+      "files": [],
+      "expectations": [
+        "Treats steps as the only official OpenCode field; accepts max_turns and maxTurns only as legacy MobileWork expert.json inputs when values agree, and never emits those names.",
+        "Validates model, variant, subagent-only hidden and non-empty finite JSON options before generation; rejects temperature/top_p at role top level or nested in options.",
+        "Projects exactly the supported declared fields to Agent Markdown, opencode.json and the README summary while omitting inherited defaults, sampling fields and legacy tools; unchanged legacy sampling packages validate with a structured warning.",
+        "Validator rejects missing, extra or changed runtime fields in either derived Agent representation.",
+        "Same-slug force upgrade removes stale optional fields from installed config and receipt-owned Agent files, and packaged clean extraction validates again."
+      ]
+    },
+    {
+      "id": 25,
+      "name": "lsp-and-strict-runtime-contract",
+      "prompt": "使用显式输入的目标 OpenCode 版本合同生成并校验 LSP true、false、custom mapping 和省略形态；同时检查空 mapping、空 command/extensions、错误 env/initialization、未知字段、重复 plugins/instructions/Agent MCP、普通 command 的 Agent/model 引用、旧 title 回退和 loopback Git reference。",
+      "expected_output": "Generator and validator enforce one exact manifest/projection contract without emitting meaningless LSP roots or silently dropping unsupported fields.",
+      "files": [],
+      "expectations": [
+        "Accepts and exactly projects LSP true, false, and a non-empty server mapping while preserving omission when lsp is undeclared.",
+        "Rejects an empty LSP mapping, empty command or extensions arrays, non-string env values, non-object initialization, disabled-only extras, and unknown server fields.",
+        "Rejects duplicate npm plugins, instructions and per-Agent MCP references; every ordinary command is normalized to agent=<unique mode all Agent> and subtask=true, rejects member routing or subtask=false, and command.model must use provider/model form.",
+        "Treats role title only as a legacy name fallback and never emits a title key into Agent Markdown or opencode.json.",
+        "Treats a non-empty Git repository as an opaque OpenCode materialization input, including controlled loopback HTTP fixtures, and validates exact derived parity."
+      ]
+    },
+    {
+      "id": 26,
+      "name": "cross-package-workspace-collision-audit",
+      "prompt": "设计并验证两个需要同时安装到同一 MobileWork workspace 的专家包。两个草案暂时复用了 Agent/MCP/LSP key、command 文件名、plugins/shell-guard.ts 和 tools/quality-score.ts。请判断归因、修正命名，并分别安装和共存安装读回。",
+      "expected_output": "The authoring flow identifies package-level namespace collisions before blaming MobileWork, namespaces workspace-owned resources, and proves independent plus same-workspace installation through receipts and config readback.",
+      "files": [],
+      "expectations": [
+        "Treats Agent ids, MCP names, LSP server keys, command names, local plugin paths and custom tool paths as shared workspace ownership surfaces.",
+        "Uses slug-namespaced plugin and tool paths and updates workflow executor refs plus permission tool names consistently.",
+        "Keeps npm plugins and package dependencies shared only when names, versions and ownership contracts are compatible.",
+        "Runs each package installation independently and then installs both sequentially into one clean workspace.",
+        "Attributes an exact receipt/path/key collision to expert authoring unless independent runtime evidence shows MobileWork lost or corrupted a namespaced projection."
+      ]
+    },
+    {
+      "id": 27,
+      "name": "official-agent-skills-frontmatter-contract",
+      "prompt": "创建 legacy Skill 并分别静态诊断、导入 unified 专家包：验证 name/description 边界，以及 license、compatibility、metadata、allowed-tools 和未知字段。所有成功产物必须符合 agentskills.io specification，上传内容不得自动改写。",
+      "expected_output": "The Agent Skills Specification page is authoritative, one shared internal validator gates production paths, and the contract-pinned skills-ref snapshot independently cross-checks successful outputs in CI.",
+      "files": [],
+      "expectations": [
+        "Allows only name, description, license, compatibility, metadata and allowed-tools in SKILL.md frontmatter.",
+        "Enforces 1-64 lowercase ASCII kebab-case names matching the directory, non-empty descriptions up to 1024 characters and compatibility up to 500 characters.",
+        "Requires metadata to map strings to strings and allowed-tools to use a non-empty string without coercing YAML lists, mappings or numeric values.",
+        "Rejects an invalid uploaded skill before package writes and preserves the target package plus uploaded bytes exactly.",
+        "Blocks validation, packaging and installation for existing noncompliant skills without grandfathering or automatic repair.",
+        "Treats https://agentskills.io/specification as authoritative, blocks every official mandatory-rule failure, and reports recommendations such as progressive disclosure, a roughly 500-line SKILL.md limit and shallow references as warnings rather than mandatory failures.",
+        "Reads the official repository snapshot commit from manager-contract.json agentSkillsSpecification for the pinned skills-ref CI oracle instead of maintaining a second SHA; a validator disagreement is recorded as a regression and the official page wins.",
+        "Uses the shared internal validator for production creation and import while retaining stricter MobileWork safety and portability gates that never accept a Skill invalid under the official page."
+      ]
+    },
+    {
+      "id": 28,
+      "name": "optional-modern-workflow-and-bounded-default",
+      "prompt": "分别创建角色自主度为 bounded、没有顶层 workflows 的 unified 单专家和专家团，并保留一个普通 runtime_extensions command；再检查声明了 Workflow 但缺流程 autonomy、Phase 或 acceptance 的现代 manifest，以及角色缺 autonomy 的旧包。",
+      "expected_output": "Modern packages may omit Workflow while permissions still follow explicit role autonomy, every declared modern Workflow is complete, and missing legacy role autonomy has a bounded temporary projection only.",
+      "files": [],
+      "expectations": [
+        "Accepts omitted or empty workflows for unified expert and team manifests without creating an implicit Phase.",
+        "Derives permissions from each explicit bounded role autonomy with unknown capabilities ask, role ownership and system todowrite allow, without using Workflow presence as a permission input.",
+        "Keeps ordinary runtime_extensions commands available without a Workflow or autonomy prefix.",
+        "Rejects every unified Workflow missing autonomy, at least one Phase or non-empty per-Phase acceptance, and rejects mixing autonomy-enabled with legacy workflows.",
+        "Rejects new creation without role autonomy; validates and installs an old missing-autonomy package with LEGACY_ROLE_AUTONOMY_DEFAULTED and an in-memory bounded projection that does not modify source bytes; blocks structural modification until every role is explicit."
+      ]
+    },
+    {
+      "id": 29,
+      "name": "single-and-team-phase-topology",
+      "prompt": "验证现代 Workflow Phase 拓扑：单专家包含多个 primary/兼容 serial Phase 但尝试 parallel；专家团分别测试 primary、serial、parallel 的空 agents、团长混入、重复角色和角色依赖。",
+      "expected_output": "The shared normalizer enforces single-expert and team Phase semantics without treating dispatch, return or rework messages as new phases.",
+      "files": [],
+      "expectations": [
+        "Allows multiple single-expert phases and compatible single-role serial phases while rejecting single-expert parallel or primary self-cloning.",
+        "Requires team primary phases to have empty agents and assigns them only to the leader.",
+        "Requires team serial and parallel phases to list at least one subagent and forbids the leader.",
+        "Rejects duplicate role ids and explains that runtime instances are created through fresh task calls.",
+        "Requires role dependencies to use separate ordered phases instead of one parallel phase."
+      ]
+    },
+    {
+      "id": 30,
+      "name": "multi-role-multi-instance-parallel",
+      "prompt": "创建一个 parallel Phase，agents 只声明 researcher 和 reviewer 两个必参与角色。运行时输入包含两个研究分片和三个评审分片；检查生成的团长、团员、README 和 command 合同，不要在 expert.json 固定实例数。",
+      "expected_output": "One parallel Phase supports multiple required roles and a dynamic 1..N instance count per role with isolated task ids, Todos, acceptance and two-level fan-in.",
+      "files": [],
+      "expectations": [
+        "Lists each required role exactly once in agents and requires at least one runtime instance per listed role.",
+        "Lets the leader independently choose the instance count and scope for each role from current input and host capacity.",
+        "Creates each instance through a fresh task call with its own task_id, Todo, output and acceptance state while keeping same-role autonomy and permissions identical.",
+        "Completes role-group fan-in before Phase fan-in and reworks only the failed instance through its existing task_id.",
+        "Falls back to one instance or a serial Phase when branches are dependent or share a mutable write target, without relying on experimental background subagents."
+      ]
+    },
+    {
+      "id": 31,
+      "name": "derived-maximum-autonomy-without-cross-role-escalation",
+      "prompt": "给一个多角色 Workflow 配置 workflow 默认 bounded、Phase guided，以及某角色 fixed override；每个角色另有显式角色自主度。计算并展示 Phase 与 Workflow 最高生效流程自主度，同时验证角色权限只跟各自角色自主度对应。",
+      "expected_output": "Generated projections distinguish process-autonomy defaults and derived maximum risk summaries from role-autonomy permission baselines without adding runtime autonomy fields or widening any role permission.",
+      "files": [],
+      "expectations": [
+        "Computes each Phase maximum from participating roles after Agent overrides and each Workflow maximum from its Phase maxima.",
+        "Counts a role once for the maximum regardless of how many runtime instances it creates.",
+        "Shows declared default and maximum effective autonomy separately in README, Agent and workflow command projections.",
+        "Uses the maximum for the generated command risk prefix, keeps role autonomy only in expert.json, and writes no non-official autonomy field to opencode.json or Agent frontmatter.",
+        "Derives each role permission only from that role's own autonomy and ownership; changing Workflow, Phase, override or execution cannot alter it or propagate another role's higher process autonomy."
+      ]
+    },
+    {
+      "id": 32,
+      "name": "state-bound-drift-discard-backup-and-restore",
+      "prompt": "一个已安装专家的 owned file、mapping、list、scalar LSP 和 dependency 出现漂移。先安全预览，再按用户明确确认执行升级，随后演示如何恢复原始漂移。还要处理确认后无关配置变化、错误 backup hash、重复恢复、并发写锁、Windows 和进程崩溃边界。",
+      "expected_output": "Force-only remains zero-write, destructive discard requires one exact state-bound confirmation and restricted backup, and restore is guarded without promoting the restored drifted state.",
+      "files": [],
+      "expectations": [
+        "Runs ordinary --force first, returns a redacted deterministic previewSha256 with exit 1, and creates neither target writes nor a backup.",
+        "Requires --force, --discard-drift, expected preview SHA-256 and exact slug together; missing parameters are argument errors, while changed slug/hash/content/receipt state is a safety failure with zero target writes.",
+        "Binds confirmation to the complete captured content state, creates and reads back a 0700/0600 manifest-last backup from the same protected bytes, and writes a clean contract-3 receipt only after the final guard.",
+        "Restores only an exact fixed-root backup id/hash/slug while the current contract-3 owned state, complete target state and receipt set still match the post-install guards; rejects tampering, later changes and replay.",
+        "Reports restore as drift-restored with evidenceLevel valid and configLoad blocked, keeps Windows and crash/stale-lock recovery not-tested, and never exposes payload secrets in manifest, stdout or stderr."
+      ]
+    },
+    {
+      "id": 33,
+      "name": "dynamic-capability-implementation-mapping",
+      "prompt": "验证 capabilityImplementationMapping：只有角色与职责时不直接生成资源；在三个互不重复且整卡确认的运行职责中，复用方法映射到无角色前缀的共享 Skill，Agent 主动调用的确定性 TypeScript 映射到带包命名空间的 Custom Tool，提交前事件拦截映射到带包命名空间的本地 Plugin。再注入一个未确认的联网前提，检查 full-card-first 和零写入。",
+      "expected_output": "The manager selects the least-powerful fitting capability carrier inside the confirmed business boundary, shares one resource per capability, and invalidates confirmation before any write when mapping reveals material impact.",
+      "files": [],
+      "expectations": [
+        "Accepts none, skill, custom-tool and opencode-plugin as candidate mapping results and keeps zero resources valid when roles, responsibilities, workflow or quality gates do not justify a reusable or runtime capability.",
+        "Requires every manager-proposed capability to have a stable business label, observable runtime behavior and trusted provenance, and forbids inventing a business rule, threshold, external write or runtime side effect.",
+        "Maps reusable methods, checklists, SOP guidance and Python or Shell script bundles to one semantic Skill; maps agent-invoked deterministic JavaScript or TypeScript to one namespaced Custom Tool; maps event listening, tool interception and runtime behavior changes to one namespaced package-wide local Plugin.",
+        "Uses MCP for external-system access rather than treating a Plugin as a connector, and permits multiple resource types only for distinct confirmed runtime responsibilities.",
+        "Creates each capability resource exactly once, lets multiple roles reference the same complete Skill or ownership entry, and never projects one resource from every role, stage or responsibility.",
+        "Lets the manager select a technical carrier without a second type confirmation only when the mapping remains entirely inside the current whole-card boundary.",
+        "Invalidates the prior confirmation and returns to full-card-first before any package write when mapping reveals a new automatic trigger, visible side effect, external write, network access, permission, cost, dependency or Runtime prerequisite.",
+        "Limits whole-card authorization to generation of current-package resources; installation, enablement, downloads, external connections, permission expansion, release and execution remain separately unauthorized."
+      ]
+    },
+    {
+      "id": 34,
+      "name": "package-local-runtime-name-disjointness",
+      "prompt": "分别构造 Workflow command、普通 runtime command、Agent id 与 unified/legacy Skill 完整名称两两同名的专家包，并覆盖创建、重建、Skill 导入、校验、打包和临时安装；同时保留展示名称、不同运行时名称、command 间判重、/init、/review 与 /help 回归。",
+      "expected_output": "One shared manifest contract rejects every package-local Command, Skill, and Agent id collision before target writes while preserving display names and existing Command-only rules.",
+      "files": [],
+      "expectations": [
+        "Accepts distinct Command names, complete Skill names, and Agent ids through generation, validation, packaging and temporary installation.",
+        "Rejects every pairwise collision across both Command sources, all Agent ids, and unified or legacy-derived complete Skill names.",
+        "Reports field-specific conflicts with skill or agent errors without renaming, suffixing or precedence rules.",
+        "Leaves the expert package, revision, distribution directory and temporary workspace unchanged after import, package or install rejection.",
+        "Leaves Agent and package display names unconstrained while preserving duplicate Command rejection, /init and /review built-in rejection, and /help allowance."
+      ]
+    }
+  ]
+}

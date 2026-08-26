@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Cell, ResponsiveContainer } from 'recharts'
-import { Plus, ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
+import { Plus, ChevronDown, ChevronUp, FlaskConical, X, Check, ArrowLeft } from 'lucide-react'
 import { api } from '../api'
 
 const VAR_LABELS = {
@@ -43,9 +43,9 @@ export default function ExperimentsPage() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
-        <Link to={`/objects/${objectId}`} className="btn !px-2">←</Link>
+        <Link to={`/objects/${objectId}`} className="btn !px-2.5" aria-label="返回"><ArrowLeft size={14} /></Link>
         <h1 className="text-xl font-semibold flex items-center gap-2"><FlaskConical size={20} className="text-accent" /> 对照实验</h1>
-        <span className="text-xs text-muted">同一组 case 在不同变量下对比，量化专家介入价值</span>
+        <span className="text-xs text-muted">同一组用例在不同变量下对比，量化专家介入价值</span>
         <button className="btn btn-primary ml-auto" onClick={() => setShowNew(true)}><Plus size={14} /> 新建实验</button>
       </div>
 
@@ -67,7 +67,7 @@ export default function ExperimentsPage() {
             {expanded === exp.id && detail && (
               <div className="px-3 pb-3">
                 {detail.variants.length === 0 ? (
-                  <div className="text-xs text-muted py-3">该实验下还没有评测运行。发起评测时指定本实验与 variant 即可。</div>
+                  <div className="text-xs text-muted py-3">该实验下还没有评测运行。发起评测时指定本实验与变体即可。</div>
                 ) : (
                   <div>
                     <div className="h-40 mb-3">
@@ -126,8 +126,8 @@ export default function ExperimentsPage() {
                 <input className="input" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
               </div>
               <div className="flex justify-end gap-2">
-                <button className="btn" onClick={() => setShowNew(false)}>取消</button>
-                <button className="btn btn-primary" disabled={!form.name.trim()} onClick={create}>创建</button>
+                <button className="btn" onClick={() => setShowNew(false)}><X size={13} />取消</button>
+                <button className="btn btn-primary" disabled={!form.name.trim()} onClick={create}><Check size={13} />创建</button>
               </div>
             </div>
           </div>

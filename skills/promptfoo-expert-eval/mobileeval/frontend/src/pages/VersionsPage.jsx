@@ -35,7 +35,7 @@ export default function VersionsPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <Link to={`/objects/${objectId}`} className="btn !px-2 !py-1 text-xs"><ArrowLeft size={13} /> 返回评测中心</Link>
+          <Link to={`/objects/${objectId}`} className="btn !px-2 text-xs"><ArrowLeft size={13} />返回评测中心</Link>
           <h2 className="font-semibold flex items-center gap-1.5"><History size={16} className="text-accent" /> 版本历史</h2>
         </div>
         {obj && <div className="text-xs text-muted">当前版本 v{obj.current_version || 1} · {obj.name}</div>}
@@ -65,9 +65,9 @@ export default function VersionsPage() {
                     <td className="text-xs text-muted">{v.created_at}</td>
                     <td className="text-right whitespace-nowrap">
                       {!isCurrent && (
-                        <button className="btn !px-2 !py-1 text-xs" disabled={restoring !== null}
+                        <button className="btn !px-2 text-xs" disabled={restoring !== null}
                           onClick={() => restore(v.version)}>
-                          {restoring === v.version ? <Spinner /> : <RotateCcw size={12} className="inline mr-1" />}切换到此版本
+                          {restoring === v.version ? <Spinner /> : <><RotateCcw size={12} />切换到此版本</>}
                         </button>
                       )}
                     </td>
