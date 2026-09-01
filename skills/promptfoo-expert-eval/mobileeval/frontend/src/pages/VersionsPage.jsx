@@ -78,7 +78,7 @@ export default function VersionsPage() {
   }
 
   const restore = async (version) => {
-    if (!window.confirm(`确定把专家团切换到 v${version}？\n\n将用 v${version} 快照覆盖当前隔离工作区（若来源为全局专家也会同步全局），并更新当前版本号。切换前当前版本会自动快照，可随时切回。`)) return
+    if (!window.confirm(`确定把${obj?.kind === 'team' ? '专家团' : '专家'}切换到 v${version}？\n\n将用 v${version} 快照覆盖当前隔离工作区（若来源为全局专家也会同步全局），并更新当前版本号。切换前当前版本会自动快照，可随时切回。`)) return
     setRestoring(version)
     setError('')
     try {

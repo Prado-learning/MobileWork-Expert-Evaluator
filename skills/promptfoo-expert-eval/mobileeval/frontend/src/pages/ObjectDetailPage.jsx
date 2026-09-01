@@ -81,7 +81,7 @@ export default function ObjectDetailPage() {
   }
 
   const delObject = async () => {
-    if (!window.confirm(`确认删除专家团「${obj.name}」？其用例、评测记录与隔离工作区将一并删除，不可恢复。`)) return
+    if (!window.confirm(`确认删除${obj.kind === 'team' ? '专家团' : '专家'}「${obj.name}」？其用例、评测记录与隔离工作区将一并删除，不可恢复。`)) return
     setError('')
     try {
       await api.deleteObject(objectId)
@@ -107,7 +107,7 @@ export default function ObjectDetailPage() {
         <h1 className="text-xl font-semibold truncate">{obj.name}</h1>
         <KindBadge kind={obj.kind} />
         <span className="text-xs text-muted">{obj.current_version ? `v${obj.current_version}` : ''}</span>
-        <button className="btn btn-danger !px-1.5 !py-0.5" onClick={delObject} title="删除该专家团（用例/评测记录/隔离工作区一并删除）">
+        <button className="btn btn-danger !px-1.5 !py-0.5" onClick={delObject} title={`删除该${obj.kind === 'team' ? '专家团' : '专家'}（用例/评测记录/隔离工作区一并删除）`}>
           <Trash2 size={13} />
         </button>
         <div className="ml-auto flex-none">
@@ -275,7 +275,7 @@ export default function ObjectDetailPage() {
       <Modal open={showRun} title="发起评测（实验记录）" onClose={() => setShowRun(false)}>
         <div className="grid gap-3 text-sm">
           <div className="text-xs text-muted">
-            每次评测即一条实验记录，记录：专家版本 / 模型 / 是否启用专家团 / 重复次数。
+            每次评测即一条实验记录，记录：专家版本 / 模型 / 是否启用{obj.kind === 'team' ? '专家团' : '专家'} / 重复次数。
             同组 case 在不同变量下多次运行，即可在「历史对比」与「对照实验」中量化差异。
           </div>
           <div className="grid grid-cols-2 gap-3">

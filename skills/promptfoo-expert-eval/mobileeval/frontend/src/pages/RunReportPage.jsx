@@ -38,7 +38,7 @@ export default function RunReportPage() {
   const failedCount = (run.fail_count || 0) + (run.error_count || 0)
   const finished = run.status !== 'running' && run.status !== 'pending'
   const rerunFailed = async () => {
-    if (!window.confirm(`将新建一次评测，仅重跑本次 ${failedCount} 个失败/异常 case（沿用原版本/模型/专家团配置）。\n确认发起？`)) return
+    if (!window.confirm(`将新建一次评测，仅重跑本次 ${failedCount} 个失败/异常 case（沿用原版本/模型/${isSingle ? '专家' : '专家团'}配置）。\n确认发起？`)) return
     setRerunning(true); setError('')
     try {
       const r = await api.rerunFailedCases(runId)
