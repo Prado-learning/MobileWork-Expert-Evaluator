@@ -21,6 +21,35 @@ def _fmt_tokens(n):
     return str(n)
 
 
+def _cost_metric(run):
+    """费用估算指标：优先按模型单价（元 / 1M tokens）折算，否则回退 promptfoo 统计的 cost。
+
+    只统计到总 token（无输入/输出拆分），按常见评测场景 输入:输出 ≈ 4:1 折算：
+    估算 = tokens * (0.8*price_input + 0.2*price_output) / 1e6。
+    """
+    tokens = run.get("token_count") or 0
+    model = None
+    if run.get("model_id"):
+        conn = get_db()
+        try:
+            model = conn.execute(
+                "SELECT price_input, price_output FROM models WHERE id=?",
+                (run["model_id"],)).fetchone()
+        finally:
+            conn.close()
+    if model and tokens and ((model["price_input"] or 0) > 0 or (model["price_output"] or 0) > 0):
+        blended = 0.8 * model["price_input"] + 0.2 * model["price_output"]
+        cost = tokens * blended / 1_000_000
+        display = f"≈¥{cost:.4f}" if cost < 0.01 else f"≈¥{cost:.2f}"
+        return {"key": "estimated_cost", "name": "估算费用", "value": round(cost, 4),
+                "unit": "元", "display": display + "（按单价 4:1 折算）"}
+    if run.get("cost"):
+        return {"key": "estimated_cost", "name": "估算费用", "value": round(run["cost"], 6),
+                "unit": "$", "display": f"≈${run['cost']:.4f}（promptfoo 统计）"}
+    return {"key": "estimated_cost", "name": "估算费用", "value": None,
+            "unit": "元", "display": "—（模型未配置单价）"}
+
+
 def _tech_metrics(run, cases):
     """底层算法/技术性能指标（自动计算）。"""
     total = len(cases)
@@ -44,6 +73,7 @@ def _tech_metrics(run, cases):
          "unit": "min", "display": f"{duration_min} 分钟"},
         {"key": "token_count", "name": "Token 消耗", "value": run.get("token_count") or 0,
          "unit": "tokens", "display": _fmt_tokens(run.get("token_count") or 0)},
+        _cost_metric(run),
     ]
 
 
