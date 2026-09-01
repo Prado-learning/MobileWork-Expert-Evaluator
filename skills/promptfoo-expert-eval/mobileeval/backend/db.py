@@ -116,6 +116,8 @@ CREATE TABLE IF NOT EXISTS models (
     base_url TEXT DEFAULT '',                       -- 可选：API 端点
     api_key TEXT DEFAULT '',                        -- API key（本地明文；评测时传给 promptfoo）
     is_default INTEGER DEFAULT 0,                   -- 默认模型（发起评测时预选）
+    price_input REAL DEFAULT 0,                     -- 输入计价：元 / 1M tokens（0=未配置，不做费用估算）
+    price_output REAL DEFAULT 0,                    -- 输出计价：元 / 1M tokens
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
@@ -306,6 +308,15 @@ def _migrate_models(conn):
         conn.execute("ALTER TABLE runs ADD COLUMN base_url TEXT DEFAULT ''")
     if "model_id" not in run_cols:
         conn.execute("ALTER TABLE runs ADD COLUMN model_id INTEGER")
+    if "case_filter" not in run_cols:
+        # 仅跑指定 case 集（异常/失败 case 重跑用）；空 = 跑全部已审核 case
+        conn.execute("ALTER TABLE runs ADD COLUMN case_filter TEXT DEFAULT ''")
+    # 模型计价（费用估算）：元 / 1M tokens
+    model_cols = {r[1] for r in conn.execute("PRAGMA table_info(models)").fetchall()}
+    if "price_input" not in model_cols:
+        conn.execute("ALTER TABLE models ADD COLUMN price_input REAL DEFAULT 0")
+    if "price_output" not in model_cols:
+        conn.execute("ALTER TABLE models ADD COLUMN price_output REAL DEFAULT 0")
 
 
 def _migrate_detask(conn):

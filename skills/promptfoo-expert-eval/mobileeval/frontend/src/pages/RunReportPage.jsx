@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { Check, X, Star, MessageSquare } from 'lucide-react'
+import { Check, X, Star, MessageSquare, RotateCcw } from 'lucide-react'
 import { api } from '../api'
 import { StatusBadge, KindBadge, Empty, Modal, Spinner, HelpButton, fmtTime, fmtMs } from '../components/ui'
 import Markdown from '../components/Markdown'
 
 export default function RunReportPage() {
   const { runId } = useParams()
+  const navigate = useNavigate()
   const [report, setReport] = useState(null)
   const [error, setError] = useState('')
   const [showReview, setShowReview] = useState(false)
@@ -15,6 +16,7 @@ export default function RunReportPage() {
   const [sessionDetail, setSessionDetail] = useState(null)   // 会话证据弹窗数据
   const [sessionLoadingId, setSessionLoadingId] = useState(null)  // 当前正在加载的会话 id（避免所有项一起转圈）
   const [reviewHelp, setReviewHelp] = useState(false)  // 人工评审说明弹窗
+  const [rerunning, setRerunning] = useState(false)    // 一键重跑异常/失败 case
 
   const load = async () => {
     try {
@@ -31,12 +33,31 @@ export default function RunReportPage() {
   const isSingle = object_kind === 'single'
   const chartData = cases.map(c => ({ name: c.case_id.replace(/^task-/, '').slice(0, 12), score: c.score ?? 0, pass: !!c.pass }))
 
+  const failedCount = (run.fail_count || 0) + (run.error_count || 0)
+  const finished = run.status !== 'running' && run.status !== 'pending'
+  const rerunFailed = async () => {
+    if (!window.confirm(`将新建一次评测，仅重跑本次 ${failedCount} 个失败/异常 case（沿用原版本/模型/专家团配置）。\n确认发起？`)) return
+    setRerunning(true); setError('')
+    try {
+      const r = await api.rerunFailedCases(runId)
+      navigate(`/runs/${r.id}`)
+    } catch (e) { setError(`重跑失败：${e.message}`) }
+    finally { setRerunning(false) }
+  }
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
         <Link to={`/objects/${run.object_id}`} className="btn !px-2">←</Link>
         <h1 className="text-xl font-semibold">{object_name} · 评测报告</h1>
         <StatusBadge status={run.status} />
+        {finished && failedCount > 0 && (
+          <button className="btn !py-1.5 text-xs" onClick={rerunFailed} disabled={rerunning}
+            title="新建一次评测，仅重跑本次失败/异常的 case（省时省费用）">
+            {rerunning ? <Spinner /> : <RotateCcw size={12} className="mr-1 inline" />}
+            一键重跑异常/失败（{failedCount}）
+          </button>
+        )}
         <a className="btn !py-1.5 text-xs ml-auto" href={`/api/runs/${runId}/export`} download title="下载 eval.log / results.json / 每 case 输出与过程 trace 的完整原始数据">
           导出原始过程数据
         </a>

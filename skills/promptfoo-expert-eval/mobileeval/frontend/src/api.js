@@ -28,6 +28,7 @@ export const api = {
   getRun: (id) => req(`/api/runs/${id}`),
   createRun: (taskId, body) => req(`/api/tasks/${taskId}/runs`, { method: 'POST', body: JSON.stringify(body) }),
   createObjectRun: (objectId, body) => req(`/api/objects/${objectId}/runs`, { method: 'POST', body: JSON.stringify(body) }),
+  rerunFailedCases: (runId) => req(`/api/runs/${runId}/rerun-failed`, { method: 'POST', body: '{}' }),
   deleteRun: (id) => req(`/api/runs/${id}`, { method: 'DELETE' }),
   compareRuns: (ids) => req(`/api/runs/compare?ids=${ids.join(',')}`),
   // 报告 / 评审 / AI 工具（走插件脚本）

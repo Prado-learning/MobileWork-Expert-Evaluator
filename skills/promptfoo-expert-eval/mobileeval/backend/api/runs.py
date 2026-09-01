@@ -6,7 +6,7 @@ import zipfile
 from flask import Blueprint, jsonify, request, send_file
 
 import config
-from db import get_db, jloads, row_to_dict
+from db import get_db, jdumps, jloads, row_to_dict
 import eval_engine
 
 runs_bp = Blueprint("runs", __name__)
@@ -17,6 +17,7 @@ def _serialize(run_row, with_cases=False):
     if d:
         d["session_ids"] = jloads(d.get("session_ids"))
         d["case_ids"] = jloads(d.get("case_ids"))
+        d["case_filter"] = jloads(d.get("case_filter"))
         # 附带全局模型名（前端展示用）
         d["model_name"] = ""
         if d.get("model_id"):
@@ -75,12 +76,13 @@ def _create_run_for_object(object_id, data):
             base_url = mrow["base_url"] or ""
         cur = conn.execute(
             """INSERT INTO runs (task_id, object_id, status, provider, model, base_url, model_id,
-               repeat, concurrency, experiment_id, variant, version, agent_on)
-               VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               repeat, concurrency, experiment_id, variant, version, agent_on, case_filter)
+               VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (obj["id"], "pending", provider, model, base_url, model_id,
              int(data.get("repeat") or 1), concurrency,
              data.get("experiment_id") or None, data.get("variant") or "",
-             data.get("version") or f"v{obj['current_version'] or 1}", agent_on),
+             data.get("version") or f"v{obj['current_version'] or 1}", agent_on,
+             jdumps(data["case_filter"]) if data.get("case_filter") else ""),
         )
         conn.commit()
         return cur.lastrowid, None, None
@@ -120,6 +122,48 @@ def create_run_from_task(task_id):
         return jsonify({"error": err}), code
     eval_engine.launch_run(run_id)
     return jsonify({"id": run_id, "status": "pending"}), 201
+
+
+@runs_bp.post("/runs/<int:run_id>/rerun-failed")
+def rerun_failed(run_id):
+    """一键重跑异常/失败 case：从该运行挑出未通过的 case，沿用原实验变量新建一次运行。
+
+    显著省时省费用：不必整批重跑。新运行仅包含原运行中 pass=0 的 case
+    （含链路异常与真失败），其余变量（版本/模型/是否专家团）与原运行一致。
+    """
+    conn = get_db()
+    try:
+        run = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        if not run:
+            return jsonify({"error": "运行不存在"}), 404
+        if run["status"] in ("pending", "running"):
+            return jsonify({"error": "该运行仍在进行中，请等待完成后再重跑"}), 400
+        failed = conn.execute(
+            "SELECT DISTINCT case_id FROM case_results WHERE run_id=? AND pass=0",
+            (run_id,)).fetchall()
+        case_ids = [r["case_id"] for r in failed if r["case_id"]]
+        if not case_ids:
+            return jsonify({"error": "该运行没有失败/异常的 case，无需重跑"}), 400
+        object_id = run["object_id"]
+    finally:
+        conn.close()
+    data = {
+        "model_id": run["model_id"],
+        "provider": run["provider"],
+        "model": run["model"],
+        "repeat": 1,
+        "concurrency": run["concurrency"] or 1,
+        "version": run["version"],
+        "agent_on": run["agent_on"],
+        "experiment_id": run["experiment_id"],
+        "variant": (run["variant"] + "-rerun") if run["variant"] else "rerun",
+        "case_filter": case_ids,
+    }
+    new_id, err, code = _create_run_for_object(object_id, data)
+    if err:
+        return jsonify({"error": err}), code
+    eval_engine.launch_run(new_id)
+    return jsonify({"id": new_id, "status": "pending", "rerun_cases": case_ids}), 201
 
 
 @runs_bp.get("/runs/<int:run_id>/export")
