@@ -17,6 +17,8 @@ export default function RunReportPage() {
   const [sessionLoadingId, setSessionLoadingId] = useState(null)  // 当前正在加载的会话 id（避免所有项一起转圈）
   const [reviewHelp, setReviewHelp] = useState(false)  // 人工评审说明弹窗
   const [rerunning, setRerunning] = useState(false)    // 一键重跑异常/失败 case
+  const [selected, setSelected] = useState([])         // 批量判定：勾选的 case_id 列表
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   const load = async () => {
     try {
@@ -43,6 +45,24 @@ export default function RunReportPage() {
       navigate(`/runs/${r.id}`)
     } catch (e) { setError(`重跑失败：${e.message}`) }
     finally { setRerunning(false) }
+  }
+
+  // 批量判定：已有结论（pass/fail）的 case 后端会跳过，不覆盖人工意见
+  const verdictByCase = {}
+  reviews.forEach((r) => { if (r.case_id && (r.verdict === 'pass' || r.verdict === 'fail')) verdictByCase[r.case_id] = r.verdict })
+  const unjudged = cases.filter((c) => !verdictByCase[c.case_id]).map((c) => c.case_id)
+  const toggleSelect = (cid) => setSelected((s) => s.includes(cid) ? s.filter((x) => x !== cid) : [...s, cid])
+  const bulkVerdict = async (v) => {
+    if (!selected.length) return
+    if (!window.confirm(`将把 ${selected.length} 个 case 批量判定为「${v === 'pass' ? '通过' : '失败'}」（已有判定的自动跳过）。确认？`)) return
+    setBulkBusy(true); setError('')
+    try {
+      const r = await api.bulkReview(runId, { case_ids: selected, verdict: v })
+      setSelected([])
+      await load()
+      alert(`批量判定完成：新增 ${r.created} 条${r.skipped ? `，跳过 ${r.skipped} 条（已有判定）` : ''}`)
+    } catch (e) { setError(`批量判定失败：${e.message}`) }
+    finally { setBulkBusy(false) }
   }
 
   return (
@@ -158,8 +178,30 @@ export default function RunReportPage() {
       </div>
 
       <div className="card mb-4">
-        <h3 className="font-semibold mb-3">case 明细（{cases.length}）</h3>
-        {cases.length === 0 ? <Empty text="无 case" /> : cases.map(c => <CaseRow key={c.id} c={c} />)}
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <h3 className="font-semibold">case 明细（{cases.length}）</h3>
+          <span className="text-xs text-muted">已判定 {Object.keys(verdictByCase).length}/{cases.length}</span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button className="btn !py-1 text-xs" disabled={!unjudged.length}
+              onClick={() => setSelected(unjudged)}
+              title="勾选所有尚未人工判定的 case">
+              全选未判定（{unjudged.length}）
+            </button>
+            {selected.length > 0 && <button className="btn !py-1 text-xs" onClick={() => setSelected([])}>清空勾选</button>}
+            <button className="btn !py-1 text-xs" disabled={!selected.length || bulkBusy}
+              onClick={() => bulkVerdict('pass')} title="把勾选的 case 一次性判定为通过">
+              <Check size={12} className="inline mr-1 text-accent" />批量判定通过{selected.length ? `（${selected.length}）` : ''}
+            </button>
+            <button className="btn !py-1 text-xs" disabled={!selected.length || bulkBusy}
+              onClick={() => bulkVerdict('fail')} title="把勾选的 case 一次性判定为失败">
+              {bulkBusy ? <Spinner /> : <X size={12} className="inline mr-1 text-danger" />}批量判定失败{selected.length ? `（${selected.length}）` : ''}
+            </button>
+          </div>
+        </div>
+        {cases.length === 0 ? <Empty text="无 case" /> : cases.map(c => (
+          <CaseRow key={c.id} c={c} existingVerdict={verdictByCase[c.case_id] || ''}
+            selected={selected.includes(c.case_id)} onSelect={toggleSelect} />
+        ))}
       </div>
 
       <div className="card mb-4">
@@ -372,12 +414,13 @@ function MetricGroup({ title, metrics, tone, explain }) {
   )
 }
 
-function CaseRow({ c }) {
+function CaseRow({ c, existingVerdict, selected, onSelect }) {
   const [open, setOpen] = useState(false)
   const [verdict, setVerdict] = useState('')
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const { runId } = useParams()
+  const shownVerdict = verdict || existingVerdict
 
   const submitVerdict = async (v) => {
     setSubmitting(true)
@@ -388,27 +431,34 @@ function CaseRow({ c }) {
     finally { setSubmitting(false) }
   }
   return (
-    <div className="border border-hairline rounded-default mb-2">
-      <button className="w-full flex items-center gap-3 p-3 text-left hover:bg-page/50" onClick={() => setOpen(!open)}>
+    <div className={`border border-hairline rounded-default mb-2 ${selected ? 'border-accent/60 bg-accent/5' : ''}`}>
+      <div className="w-full flex items-center gap-3 p-3 text-left hover:bg-page/50 cursor-pointer" onClick={() => setOpen(!open)}>
+        <input type="checkbox" checked={selected} onClick={(e) => e.stopPropagation()}
+          onChange={() => onSelect(c.case_id)} title="勾选后可批量判定" />
         <span className={`badge ${c.pass ? 'badge-pass' : 'badge-fail'}`}>{c.pass
           ? <span className="flex items-center gap-1"><Check size={11} /> 通过</span>
           : <span className="flex items-center gap-1"><X size={11} /> 失败</span>}</span>
         <span className="font-mono text-xs text-muted">{c.case_id}</span>
         <span className="text-sm">{c.case_title}</span>
         <span className="text-xs text-muted">{c.case_type}</span>
-        {c.needs_review === 1 && <span className="text-xs text-warn font-medium">待人工判定</span>}
+        {c.needs_review === 1 && !shownVerdict && <span className="text-xs text-warn font-medium">待人工判定</span>}
+        {shownVerdict && (
+          <span className={`text-xs font-medium ${shownVerdict === 'pass' ? 'text-accent' : 'text-danger'}`}>
+            人工判定：{shownVerdict === 'pass' ? '通过' : '失败'}
+          </span>
+        )}
         <span className="text-xs text-muted">score={c.score ?? '—'}</span>
         <span className="ml-auto text-xs text-muted">{c.error ? '异常' : `输出 ${c.output_length} 字符`}</span>
         <span className="text-xs text-muted">{open ? '▲' : '▼'}</span>
-      </button>
+      </div>
       {open && (
         <div className="px-3 pb-3 text-sm space-y-3">
           {c.error && <div className="text-danger text-xs">{c.error}</div>}
           <div className="flex items-center gap-2 text-xs">
             <span className="text-muted">人工判定：</span>
-            {verdict ? (
-              <span className={verdict === 'pass' ? 'text-accent font-medium' : 'text-danger font-medium'}>
-                {verdict === 'pass' ? '已判定通过' : '已判定失败'}
+            {shownVerdict ? (
+              <span className={shownVerdict === 'pass' ? 'text-accent font-medium' : 'text-danger font-medium'}>
+                {shownVerdict === 'pass' ? '已判定通过' : '已判定失败'}
               </span>
             ) : (
               <span className="text-muted">{c.needs_review === 1 ? '待判定' : '未判定'}</span>

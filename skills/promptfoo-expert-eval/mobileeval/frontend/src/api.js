@@ -36,6 +36,7 @@ export const api = {
   getRunSession: (runId, sid) => req(`/api/runs/${runId}/session/${encodeURIComponent(sid)}`),
   listReviews: (runId) => req(`/api/runs/${runId}/reviews`),
   createReview: (runId, body) => req(`/api/runs/${runId}/reviews`, { method: 'POST', body: JSON.stringify(body) }),
+  bulkReview: (runId, body) => req(`/api/runs/${runId}/reviews/bulk`, { method: 'POST', body: JSON.stringify(body) }),
   deleteReview: (id) => req(`/api/reviews/${id}`, { method: 'DELETE' }),
   invokeTool: (name, body) => req(`/api/assistant/tools/${name}`, { method: 'POST', body: JSON.stringify(body) }),
   listSuggestions: (runId) => req(`/api/runs/${runId}/suggestions`),
