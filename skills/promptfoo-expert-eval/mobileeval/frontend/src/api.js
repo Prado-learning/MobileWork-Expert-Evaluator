@@ -62,5 +62,6 @@ export const api = {
   createModel: (body) => req('/api/models', { method: 'POST', body: JSON.stringify(body) }),
   updateModel: (id, body) => req(`/api/models/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteModel: (id) => req(`/api/models/${id}`, { method: 'DELETE' }),
+  testModel: (id) => req(`/api/models/${id}/test`, { method: 'POST', body: '{}' }),
   browse: (path) => req(`/api/fs/browse?path=${encodeURIComponent(path || '')}`),
 }
