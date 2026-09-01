@@ -28,6 +28,7 @@ export default function RunReportPage() {
   if (!report) return <Empty text="加载中…" />
 
   const { run, cases, metrics, reviews, suggestions, object_name, object_kind, stability } = report
+  const isSingle = object_kind === 'single'
   const chartData = cases.map(c => ({ name: c.case_id.replace(/^task-/, '').slice(0, 12), score: c.score ?? 0, pass: !!c.pass }))
 
   return (
@@ -50,12 +51,13 @@ export default function RunReportPage() {
       </div>
 
       <div className="mb-4">
-        <MetricGroup title="模块级效能（过程拆解：工具 / 协同 / 知识 / 输出）" metrics={metrics.module || []} tone="accent"
+        <MetricGroup title={isSingle ? '模块级效能（过程拆解：工具 / 知识 / 输出）' : '模块级效能（过程拆解：工具 / 协同 / 知识 / 输出）'}
+          metrics={(metrics.module || []).filter(m => !(isSingle && m.key === 'collaboration'))} tone="accent"
           explain={{
             title: '模块级效能指标说明',
             items: [
               { name: '工具调用准确率', desc: '由过程探针统计被测专家在整个评测过程中的工具调用成功占比（成功数 / 总数），反映专家操作工具（读文件、执行命令、编辑代码等）的正确性。' },
-              { name: '多Agent协同', desc: '团长委派断言通过率（delegation 断言通过 / 总数），并记录实际委派次数。反映团长是否按协作 SOP 把任务正确委派给对应团员（如 Bug 场景 QA 复现 → 工程师修复的顺序）。' },
+              ...(isSingle ? [] : [{ name: '多Agent协同', desc: '团长委派断言通过率（delegation 断言通过 / 总数），并记录实际委派次数。反映团长是否按协作 SOP 把任务正确委派给对应团员（如 Bug 场景 QA 复现 → 工程师修复的顺序）。' }]),
               { name: '知识匹配精准度', desc: 'kb-hit 断言通过率：检索/知识检索类工具（grep/read/webfetch 等）的输入中命中预期关键词的比例。未生成检索类断言时显示 —。' },
               { name: '输出质量分', desc: 'llm-rubric（业务视角 LLM 裁判）断言的得分，从可用性、相关性、完整性、可交付四个维度衡量最终交付物的质量。' },
             ],

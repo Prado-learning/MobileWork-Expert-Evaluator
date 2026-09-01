@@ -93,14 +93,16 @@ def _business_metrics(run, cases, reviews):
     return result
 
 
-def _module_metrics(cases):
+def _module_metrics(cases, kind="team"):
     """模块级效能指标：从过程探针（process_metrics）与模块级断言聚合。
 
     拆解各环节真实效能，而非只看最终输出：
     - 工具调用准确率（tool_accuracy）：工具调用成功占比
-    - 多Agent协同（collaboration）：委派次数 + delegation 断言通过率
+    - 多Agent协同（collaboration）：委派次数 + delegation 断言通过率（仅专家团）
     - 知识匹配精准度（kb_match）：kb-hit 断言通过率
     - 输出质量（output_quality）：llm-rubric 断言平均分
+
+    单专家（kind=single）不存在委派关系，协同维度无意义，不输出该指标。
     """
     tool_total = tool_success = tool_error = 0
     deleg_pass = deleg_total = 0
@@ -132,22 +134,26 @@ def _module_metrics(cases):
     deleg_rate = round(deleg_pass / deleg_total, 4) if deleg_total else None
     kb_rate = round(kb_pass / kb_total, 4) if kb_total else None
     out_quality = round(sum(rubric_scores) / len(rubric_scores), 2) if rubric_scores else None
-    return [
+    result = [
         {"key": "tool_accuracy", "name": "工具调用准确率",
          "value": tool_acc, "unit": "%",
          "display": f"{round(tool_acc * 100, 1)}%（{tool_success}/{tool_total}）" if tool_acc is not None else "—"},
-        {"key": "collaboration", "name": "多Agent协同",
-         "value": deleg_rate, "unit": "%",
-         "display": (f"{round(deleg_rate * 100, 1)}%（{deleg_pass}/{deleg_total} 断言，"
-                     f"{delegation_count} 次委派）" if deleg_rate is not None
-                     else f"{delegation_count} 次委派（无委派断言）")},
+    ]
+    if kind != "single":
+        result.append({"key": "collaboration", "name": "多Agent协同",
+                       "value": deleg_rate, "unit": "%",
+                       "display": (f"{round(deleg_rate * 100, 1)}%（{deleg_pass}/{deleg_total} 断言，"
+                                   f"{delegation_count} 次委派）" if deleg_rate is not None
+                                   else f"{delegation_count} 次委派（无委派断言）")})
+    result.extend([
         {"key": "kb_match", "name": "知识匹配精准度",
          "value": kb_rate, "unit": "%",
          "display": f"{round(kb_rate * 100, 1)}%（{kb_pass}/{kb_total}）" if kb_rate is not None else "—"},
         {"key": "output_quality", "name": "输出质量分",
          "value": out_quality, "unit": "/5",
          "display": f"{out_quality}/5" if out_quality is not None else "—"},
-    ]
+    ])
+    return result
 
 
 def _stability_metrics(cases):
@@ -212,7 +218,7 @@ def get_report(run_id):
             "suggestions": suggestions,
             "metrics": {
                 "tech": _tech_metrics(run, cases),
-                "module": _module_metrics(cases),
+                "module": _module_metrics(cases, obj["kind"] if obj else "team"),
                 "business": _business_metrics(run, cases, reviews),
             },
             "stability": _stability_metrics(cases),
