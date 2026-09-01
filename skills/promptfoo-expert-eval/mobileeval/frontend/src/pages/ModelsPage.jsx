@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react'
-import { Plus, Pencil, Trash2, Star, KeyRound, X, Save, Search, ChevronLeft, ChevronRight, Eye, EyeOff } from 'lucide-react'
+import { Plus, Pencil, Trash2, Star, KeyRound, X, Save, Search, ChevronLeft, ChevronRight, Eye, EyeOff, PlugZap, Check } from 'lucide-react'
 import { api } from '../api'
 import { Empty, Spinner, Modal } from '../components/ui'
 
@@ -11,6 +11,8 @@ function ModelForm({ initial, onSave, onClose }) {
     base_url: initial?.base_url || '',
     api_key: initial?.api_key || '',
     is_default: initial?.is_default || false,
+    price_input: initial?.price_input || '',
+    price_output: initial?.price_output || '',
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -26,8 +28,8 @@ function ModelForm({ initial, onSave, onClose }) {
       // 编辑：仅提交 name/model/is_default，接口地址与密钥保持原值（后端空值不覆盖）
       // 添加：name 直接等于模型名称，服务商留空由系统默认推断
       await onSave(initial
-        ? { name: form.model.trim(), model: form.model.trim(), is_default: form.is_default }
-        : { name: form.model.trim(), model: form.model.trim(), provider: '', base_url: form.base_url, api_key: form.api_key, is_default: form.is_default })
+        ? { name: form.model.trim(), model: form.model.trim(), is_default: form.is_default, price_input: form.price_input, price_output: form.price_output }
+        : { name: form.model.trim(), model: form.model.trim(), provider: '', base_url: form.base_url, api_key: form.api_key, is_default: form.is_default, price_input: form.price_input, price_output: form.price_output })
       onClose()
     } catch (e) { setError(e.message) }
     finally { setBusy(false) }
@@ -63,6 +65,16 @@ function ModelForm({ initial, onSave, onClose }) {
             </div>
           </>
         )}
+        <div>
+          <label className="label">模型单价（可选，元 / 1M tokens，用于评测费用估算）</label>
+          <div className="grid grid-cols-2 gap-3">
+            <input className="input" type="number" min={0} step="0.01" value={form.price_input}
+              placeholder="输入单价，如 2" onChange={(e) => setForm({ ...form, price_input: e.target.value })} />
+            <input className="input" type="number" min={0} step="0.01" value={form.price_output}
+              placeholder="输出单价，如 8" onChange={(e) => setForm({ ...form, price_output: e.target.value })} />
+          </div>
+          <div className="text-[11px] text-muted mt-1">留空 = 不计费；估算按输入:输出 ≈ 4:1 的 token 比例折算。</div>
+        </div>
         <label className="flex items-center gap-2 text-sm cursor-pointer">
           <input type="checkbox" checked={form.is_default}
             onChange={(e) => setForm({ ...form, is_default: e.target.checked })} />
@@ -90,6 +102,8 @@ export default function ModelsPage() {
   const [query, setQuery] = useState('')
   const [kindFilter, setKindFilter] = useState('all')   // all | default
   const [page, setPage] = useState(1)
+  const [testingId, setTestingId] = useState(null)       // 正在测试连接的模型 id
+  const [testResult, setTestResult] = useState({})        // { [modelId]: {ok, detail, latency_ms} }
 
   const load = () => {
     setError('')
@@ -115,6 +129,18 @@ export default function ModelsPage() {
 
   // 查询/筛选变化时回到第一页
   useEffect(() => { setPage(1) }, [query, kindFilter])
+
+  // 当场验证端点 / Key / 模型 id 可用，避免评测跑半天才发现 Key 无效
+  const testConn = async (m) => {
+    setTestingId(m.id)
+    setTestResult((s) => ({ ...s, [m.id]: null }))
+    try {
+      const r = await api.testModel(m.id)
+      setTestResult((s) => ({ ...s, [m.id]: r }))
+    } catch (e) {
+      setTestResult((s) => ({ ...s, [m.id]: { ok: false, detail: e.message, latency_ms: 0 } }))
+    } finally { setTestingId(null) }
+  }
 
   const del = async (m) => {
     if (!window.confirm(`确认删除模型「${m.name}」？已发起的评测不受影响。`)) return
@@ -163,7 +189,12 @@ export default function ModelsPage() {
         ) : (
           <div className="card !p-0 overflow-hidden">
             <div className="divide-y divide-hairline">
-              {pageRows.map((m) => (
+              {pageRows.map((m) => {
+                const res = testResult[m.id]
+                const price = (m.price_input > 0 || m.price_output > 0)
+                  ? `¥${m.price_input || 0} / ¥${m.price_output || 0} 每 1M tokens`
+                  : ''
+                return (
                 <div key={m.id} className="flex items-center gap-4 px-4 py-3 hover:bg-page/60 transition-colors">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -176,9 +207,22 @@ export default function ModelsPage() {
                     </div>
                     <div className="text-xs text-muted mt-0.5 truncate">
                       {m.base_url ? m.base_url : '默认端点'} · {m.api_key_hint ? m.api_key_hint : '未配置'}
+                      {price && <> · 单价 {price}</>}
                     </div>
+                    {res && (
+                      <div className={`mt-1.5 text-xs flex items-start gap-1.5 rounded-default px-2 py-1.5 ${res.ok ? 'text-accent bg-accent/5' : 'text-danger bg-danger/10'}`}>
+                        {res.ok ? <Check size={13} className="mt-px shrink-0" /> : <X size={13} className="mt-px shrink-0" />}
+                        <span className="break-all">
+                          {res.ok ? `连接成功（${res.latency_ms}ms）` : `连接失败：${res.detail}`}
+                          {res.ok && res.detail && res.detail !== '连接成功' && <span className="text-muted"> · 模型回复：{res.detail}</span>}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div className="flex-none flex items-center gap-1.5">
+                    <button className="btn !px-2 text-xs" disabled={testingId === m.id} onClick={() => testConn(m)}>
+                      {testingId === m.id ? <Spinner /> : <><PlugZap size={12} className="mr-1 inline" />测试连接</>}
+                    </button>
                     <button className="btn !px-2 text-xs" onClick={() => { setEditing(m); setShowForm(true) }}>
                       <Pencil size={12} />编辑
                     </button>
@@ -187,7 +231,8 @@ export default function ModelsPage() {
                     </button>
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}

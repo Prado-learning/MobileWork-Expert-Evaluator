@@ -229,6 +229,22 @@ def _run_worker(run_id):
             finally:
                 conn.close()
             return
+        # case_filter（异常/失败重跑）：只跑指定 case 集，跳过其余已审核 case
+        filter_ids = jloads(run.get("case_filter"))
+        if filter_ids:
+            wanted = {str(x) for x in filter_ids}
+            approved = [r for r in approved if (r["case_id"] or "") in wanted]
+        if not approved:
+            conn = get_db()
+            try:
+                conn.execute(
+                    "UPDATE runs SET status='error', error=?, finished_at=? WHERE id=?",
+                    ("重跑的 case 均不在该对象已审核用例中（可能已被删除/驳回）",
+                     _now(), run_id))
+                conn.commit()
+            finally:
+                conn.close()
+            return
         # 只跑审核通过的 case 集，不合并插件默认 case 库
         case_file = write_cases_file(approved, run_dir)
         cmd += ["--case-file", case_file, "--case-file-only"]

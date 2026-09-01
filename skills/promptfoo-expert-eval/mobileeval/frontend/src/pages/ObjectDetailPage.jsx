@@ -224,7 +224,7 @@ export default function ObjectDetailPage() {
                         <input type="checkbox" checked={selected.includes(r.id)}
                           onChange={(e) => setSelected(e.target.checked ? [...selected, r.id] : selected.filter(x => x !== r.id))} />
                         #{r.id} {r.score != null ? r.score.toFixed(2) : r.status}
-                        <span className="text-muted">{r.version}·{r.agent_on === 0 ? '无专家' : '专家团'}</span>
+                        <span className="text-muted">{r.version}·{r.agent_on === 0 ? '无专家' : (obj.kind === 'team' ? '专家团' : '专家')}</span>
                       </label>
                     ))}
                   </div>
@@ -258,7 +258,7 @@ export default function ObjectDetailPage() {
                           </td>
                           <td className="text-xs">{r.version || '—'}</td>
                           <td className="text-xs">{r.model_name || r.model || '—'}</td>
-                          <td className="text-xs">{r.agent_on === 0 ? <span className="text-warn">无专家</span> : '专家团'}</td>
+                          <td className="text-xs">{r.agent_on === 0 ? <span className="text-warn">无专家</span> : (obj.kind === 'team' ? '专家团' : '专家')}</td>
                           <td className="text-xs">{r.repeat || 1}</td>
                           <td>{fmtMs(r.duration_ms)}</td>
                           <td className="text-xs text-muted">{fmtTime(r.created_at)}</td>

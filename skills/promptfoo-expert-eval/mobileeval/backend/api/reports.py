@@ -21,6 +21,35 @@ def _fmt_tokens(n):
     return str(n)
 
 
+def _cost_metric(run):
+    """费用估算指标：优先按模型单价（元 / 1M tokens）折算，否则回退 promptfoo 统计的 cost。
+
+    只统计到总 token（无输入/输出拆分），按常见评测场景 输入:输出 ≈ 4:1 折算：
+    估算 = tokens * (0.8*price_input + 0.2*price_output) / 1e6。
+    """
+    tokens = run.get("token_count") or 0
+    model = None
+    if run.get("model_id"):
+        conn = get_db()
+        try:
+            model = conn.execute(
+                "SELECT price_input, price_output FROM models WHERE id=?",
+                (run["model_id"],)).fetchone()
+        finally:
+            conn.close()
+    if model and tokens and ((model["price_input"] or 0) > 0 or (model["price_output"] or 0) > 0):
+        blended = 0.8 * model["price_input"] + 0.2 * model["price_output"]
+        cost = tokens * blended / 1_000_000
+        display = f"≈¥{cost:.4f}" if cost < 0.01 else f"≈¥{cost:.2f}"
+        return {"key": "estimated_cost", "name": "估算费用", "value": round(cost, 4),
+                "unit": "元", "display": display + "（按单价 4:1 折算）"}
+    if run.get("cost"):
+        return {"key": "estimated_cost", "name": "估算费用", "value": round(run["cost"], 6),
+                "unit": "$", "display": f"≈${run['cost']:.4f}（promptfoo 统计）"}
+    return {"key": "estimated_cost", "name": "估算费用", "value": None,
+            "unit": "元", "display": "—（模型未配置单价）"}
+
+
 def _tech_metrics(run, cases):
     """底层算法/技术性能指标（自动计算）。"""
     total = len(cases)
@@ -44,6 +73,7 @@ def _tech_metrics(run, cases):
          "unit": "min", "display": f"{duration_min} 分钟"},
         {"key": "token_count", "name": "Token 消耗", "value": run.get("token_count") or 0,
          "unit": "tokens", "display": _fmt_tokens(run.get("token_count") or 0)},
+        _cost_metric(run),
     ]
 
 
@@ -93,14 +123,16 @@ def _business_metrics(run, cases, reviews):
     return result
 
 
-def _module_metrics(cases):
+def _module_metrics(cases, kind="team"):
     """模块级效能指标：从过程探针（process_metrics）与模块级断言聚合。
 
     拆解各环节真实效能，而非只看最终输出：
     - 工具调用准确率（tool_accuracy）：工具调用成功占比
-    - 多Agent协同（collaboration）：委派次数 + delegation 断言通过率
+    - 多Agent协同（collaboration）：委派次数 + delegation 断言通过率（仅专家团）
     - 知识匹配精准度（kb_match）：kb-hit 断言通过率
     - 输出质量（output_quality）：llm-rubric 断言平均分
+
+    单专家（kind=single）不存在委派关系，协同维度无意义，不输出该指标。
     """
     tool_total = tool_success = tool_error = 0
     deleg_pass = deleg_total = 0
@@ -132,22 +164,26 @@ def _module_metrics(cases):
     deleg_rate = round(deleg_pass / deleg_total, 4) if deleg_total else None
     kb_rate = round(kb_pass / kb_total, 4) if kb_total else None
     out_quality = round(sum(rubric_scores) / len(rubric_scores), 2) if rubric_scores else None
-    return [
+    result = [
         {"key": "tool_accuracy", "name": "工具调用准确率",
          "value": tool_acc, "unit": "%",
          "display": f"{round(tool_acc * 100, 1)}%（{tool_success}/{tool_total}）" if tool_acc is not None else "—"},
-        {"key": "collaboration", "name": "多Agent协同",
-         "value": deleg_rate, "unit": "%",
-         "display": (f"{round(deleg_rate * 100, 1)}%（{deleg_pass}/{deleg_total} 断言，"
-                     f"{delegation_count} 次委派）" if deleg_rate is not None
-                     else f"{delegation_count} 次委派（无委派断言）")},
+    ]
+    if kind != "single":
+        result.append({"key": "collaboration", "name": "多Agent协同",
+                       "value": deleg_rate, "unit": "%",
+                       "display": (f"{round(deleg_rate * 100, 1)}%（{deleg_pass}/{deleg_total} 断言，"
+                                   f"{delegation_count} 次委派）" if deleg_rate is not None
+                                   else f"{delegation_count} 次委派（无委派断言）")})
+    result.extend([
         {"key": "kb_match", "name": "知识匹配精准度",
          "value": kb_rate, "unit": "%",
          "display": f"{round(kb_rate * 100, 1)}%（{kb_pass}/{kb_total}）" if kb_rate is not None else "—"},
         {"key": "output_quality", "name": "输出质量分",
          "value": out_quality, "unit": "/5",
          "display": f"{out_quality}/5" if out_quality is not None else "—"},
-    ]
+    ])
+    return result
 
 
 def _stability_metrics(cases):
@@ -212,7 +248,7 @@ def get_report(run_id):
             "suggestions": suggestions,
             "metrics": {
                 "tech": _tech_metrics(run, cases),
-                "module": _module_metrics(cases),
+                "module": _module_metrics(cases, obj["kind"] if obj else "team"),
                 "business": _business_metrics(run, cases, reviews),
             },
             "stability": _stability_metrics(cases),
