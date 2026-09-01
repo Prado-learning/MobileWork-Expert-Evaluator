@@ -1,10 +1,109 @@
 """专家导入 / 版本管理 / 迭代优化 / 对比报告 API（全部走插件脚本）。"""
+import difflib
+import os
+
 from flask import Blueprint, jsonify, request
 
 import plugin_cli
 from db import get_db, jloads, row_to_dict
 
 expert_bp = Blueprint("expert", __name__)
+
+
+def _version_files(object_id, spec):
+    """读取某版本的 agent 定义文件。spec = 版本号 或 "current"（当前隔离工作区）。
+
+    返回 ({相对路径: 文本}, 显示标签)。路径强制限定在对象工作区内（安全边界）。
+    """
+    ws, _ = plugin_cli._resolve_object(object_id)
+    ws_real = os.path.realpath(ws)
+    if spec == "current":
+        root = os.path.join(ws, ".opencode", "agents")
+        label = "当前工作区"
+    else:
+        try:
+            vn = int(spec)
+        except (TypeError, ValueError):
+            raise RuntimeError(f"版本参数无效：{spec}（应为版本号或 current）")
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT path FROM expert_versions WHERE object_id=? AND version=?",
+                (object_id, vn)).fetchone()
+        finally:
+            conn.close()
+        if not row or not row["path"]:
+            raise RuntimeError(f"版本 v{vn} 不存在快照")
+        root = row["path"]
+        if not os.path.isdir(root) and os.path.isdir(os.path.join(root, "agents")):
+            root = os.path.join(root, "agents")
+        label = f"v{vn}"
+    if not os.path.isdir(root):
+        raise RuntimeError(f"{label} 的 agent 目录不存在：{root}")
+    if not os.path.realpath(root).startswith(ws_real + os.sep):
+        raise RuntimeError("版本快照路径不在对象工作区内，拒绝读取")
+    files = {}
+    for dirpath, _, names in os.walk(root):
+        for name in sorted(names):
+            fp = os.path.join(dirpath, name)
+            rel = os.path.relpath(fp, root).replace(os.sep, "/")
+            try:
+                with open(fp, encoding="utf-8", errors="replace") as fh:
+                    files[rel] = fh.read()
+            except OSError:
+                continue
+    return files, label
+
+
+@expert_bp.get("/objects/<int:object_id>/versions/diff")
+def version_diff(object_id):
+    """两版专家定义的 diff：params a=<版本|current>&b=<版本|current>。
+
+    optimize-expert 生成新版本并快照旧版后，用此接口查看「改了什么」，闭环优化。
+    """
+    a = request.args.get("a", "")
+    b = request.args.get("b", "")
+    if not a or not b:
+        return jsonify({"error": "a 与 b 参数必填（版本号或 current）"}), 400
+    try:
+        files_a, label_a = _version_files(object_id, a)
+        files_b, label_b = _version_files(object_id, b)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 400
+    paths = sorted(set(files_a) | set(files_b))
+    files = []
+    for p in paths:
+        la = (files_a.get(p) or "").splitlines()
+        lb = (files_b.get(p) or "").splitlines()
+        if p not in files_a:
+            status = "added"
+        elif p not in files_b:
+            status = "removed"
+        elif la == lb:
+            continue
+        else:
+            status = "changed"
+        lines = []
+        for ln in difflib.unified_diff(la, lb, fromfile=f"{label_a}/{p}",
+                                       tofile=f"{label_b}/{p}", lineterm=""):
+            if ln.startswith("+++") or ln.startswith("---"):
+                kind = "meta"
+            elif ln.startswith("@@"):
+                kind = "hunk"
+            elif ln.startswith("+"):
+                kind = "add"
+            elif ln.startswith("-"):
+                kind = "del"
+            else:
+                kind = "ctx"
+            lines.append({"kind": kind, "text": ln})
+        files.append({
+            "path": p, "status": status, "lines": lines,
+            "added": sum(1 for x in lines if x["kind"] == "add"),
+            "removed": sum(1 for x in lines if x["kind"] == "del"),
+        })
+    return jsonify({"a": label_a, "b": label_b, "same_count": len(paths) - len(files),
+                    "files": files})
 
 
 @expert_bp.post("/experts/import")

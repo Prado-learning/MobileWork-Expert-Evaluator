@@ -50,6 +50,7 @@ export const api = {
   importExpert: (body) => req('/api/experts/import', { method: 'POST', body: JSON.stringify(body) }),
   listVersions: (objectId) => req(`/api/objects/${objectId}/versions`),
   restoreVersion: (objectId, version) => req(`/api/objects/${objectId}/versions/${version}/restore`, { method: 'POST' }),
+  diffVersions: (objectId, a, b) => req(`/api/objects/${objectId}/versions/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`),
   listOptimizations: (objectId) => req(`/api/objects/${objectId}/optimizations`),
   optimizeExpert: (objectId, body) => req(`/api/objects/${objectId}/optimize`, { method: 'POST', body: JSON.stringify(body) }),
   compareRunsPair: (base, opt) => req(`/api/compare?base=${base}&opt=${opt}`),
