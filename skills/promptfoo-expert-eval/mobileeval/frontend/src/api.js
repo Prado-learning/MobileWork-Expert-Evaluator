@@ -28,6 +28,7 @@ export const api = {
   getRun: (id) => req(`/api/runs/${id}`),
   createRun: (taskId, body) => req(`/api/tasks/${taskId}/runs`, { method: 'POST', body: JSON.stringify(body) }),
   createObjectRun: (objectId, body) => req(`/api/objects/${objectId}/runs`, { method: 'POST', body: JSON.stringify(body) }),
+  rerunFailedCases: (runId) => req(`/api/runs/${runId}/rerun-failed`, { method: 'POST', body: '{}' }),
   deleteRun: (id) => req(`/api/runs/${id}`, { method: 'DELETE' }),
   compareRuns: (ids) => req(`/api/runs/compare?ids=${ids.join(',')}`),
   // 报告 / 评审 / AI 工具（走插件脚本）
@@ -35,6 +36,7 @@ export const api = {
   getRunSession: (runId, sid) => req(`/api/runs/${runId}/session/${encodeURIComponent(sid)}`),
   listReviews: (runId) => req(`/api/runs/${runId}/reviews`),
   createReview: (runId, body) => req(`/api/runs/${runId}/reviews`, { method: 'POST', body: JSON.stringify(body) }),
+  bulkReview: (runId, body) => req(`/api/runs/${runId}/reviews/bulk`, { method: 'POST', body: JSON.stringify(body) }),
   deleteReview: (id) => req(`/api/reviews/${id}`, { method: 'DELETE' }),
   invokeTool: (name, body) => req(`/api/assistant/tools/${name}`, { method: 'POST', body: JSON.stringify(body) }),
   listSuggestions: (runId) => req(`/api/runs/${runId}/suggestions`),
@@ -52,6 +54,7 @@ export const api = {
   importExpert: (body) => req('/api/experts/import', { method: 'POST', body: JSON.stringify(body) }),
   listVersions: (objectId) => req(`/api/objects/${objectId}/versions`),
   restoreVersion: (objectId, version) => req(`/api/objects/${objectId}/versions/${version}/restore`, { method: 'POST' }),
+  diffVersions: (objectId, a, b) => req(`/api/objects/${objectId}/versions/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`),
   listOptimizations: (objectId) => req(`/api/objects/${objectId}/optimizations`),
   optimizeExpert: (objectId, body) => req(`/api/objects/${objectId}/optimize`, { method: 'POST', body: JSON.stringify(body) }),
   compareRunsPair: (base, opt) => req(`/api/compare?base=${base}&opt=${opt}`),
@@ -64,6 +67,7 @@ export const api = {
   createModel: (body) => req('/api/models', { method: 'POST', body: JSON.stringify(body) }),
   updateModel: (id, body) => req(`/api/models/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteModel: (id) => req(`/api/models/${id}`, { method: 'DELETE' }),
+  testModel: (id) => req(`/api/models/${id}/test`, { method: 'POST', body: '{}' }),
   browse: (path) => req(`/api/fs/browse?path=${encodeURIComponent(path || '')}`),
   // Expert Manager 桥接（AI 创建/编辑专家）
   expertManagerStatus: () => req('/api/expert-manager/status'),

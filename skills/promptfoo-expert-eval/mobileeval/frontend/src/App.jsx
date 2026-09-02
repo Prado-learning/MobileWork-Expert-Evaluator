@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import ObjectTree from './components/ObjectTree'
+import RunNotifier from './components/RunNotifier'
 import ObjectsPage from './pages/ObjectsPage'
 import ObjectDetailPage from './pages/ObjectDetailPage'
 import RunReportPage from './pages/RunReportPage'
@@ -36,6 +37,7 @@ export default function App() {
           </Routes>
         </div>
       </main>
+      <RunNotifier />
     </div>
   )
 }
