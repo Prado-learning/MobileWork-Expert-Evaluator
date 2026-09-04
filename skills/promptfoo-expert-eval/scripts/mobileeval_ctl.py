@@ -22,18 +22,24 @@ PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT_DIR)))  # .
 PROJECT_ROOT = os.path.dirname(PLUGIN_ROOT)                                   # 源码仓库同级（安装副本时此推导失效）
 
 
-CONF_FILE = os.path.join(os.path.dirname(SCRIPT_DIR), ".mobileeval-home.conf")  # skill 目录缓存
+# .mobileeval-home.conf 记录"项目根在哪"。MobileWork 下技能安装目录只读（写入会使包摘要
+# 变化、授权失效），因此缓存改存用户主目录；读取时兼容技能目录里的旧缓存，但永不回写。
+CONF_FILE = os.path.join(os.path.expanduser("~"), ".mobileeval-home.conf")
+LEGACY_CONF_FILE = os.path.join(os.path.dirname(SCRIPT_DIR), ".mobileeval-home.conf")  # 旧位置（只读兼容）
 TEMPLATE_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "mobileeval")          # skill 内置项目模板
 BOOTSTRAP_TARGET = os.path.join(os.path.expanduser("~"), "MobileEval")          # 新机器首次初始化位置
 
 
 def _read_conf():
-    try:
-        with open(CONF_FILE, encoding="utf-8") as fh:
-            p = fh.read().strip()
-            return p if p and os.path.isdir(p) else None
-    except OSError:
-        return None
+    for conf in (CONF_FILE, LEGACY_CONF_FILE):
+        try:
+            with open(conf, encoding="utf-8") as fh:
+                p = fh.read().strip()
+                if p and os.path.isdir(p):
+                    return p
+        except OSError:
+            continue
+    return None
 
 
 def _write_conf(root):
@@ -108,6 +114,51 @@ def resolve_project_root():
         "请设置环境变量 MOBILEEVAL_HOME 指向项目根，例如 C:\\project\\mobile_intern\\MobileEval")
 
 
+def _sync_project_from_template(project_root):
+    """把 skill 内置模板（TEMPLATE_DIR，安装目录里随包分发的权威版本）同步到运行副本，
+    保证评测中心不是陈旧/半旧代码。
+
+    - 仅当 TEMPLATE_DIR 存在 backend/app.py 且与 project_root 不是同一目录时进行；
+    - 前端 dist 对所有 project_root 都补（构建产物，覆盖安全，避免缺页面/触发 npm build）；
+    - 后端 backend/ 源码**只在 project_root 是自举副本 BOOTSTRAP_TARGET 时**整目录同步
+      （conf/环境变量显式指向的项目视为用户自有源码，不覆盖，只补 dist）；
+    - 同步失败不阻断（记日志，继续用现有副本）。
+    """
+    import shutil as _sh
+    src_backend = os.path.join(TEMPLATE_DIR, "backend")
+    if not os.path.isfile(os.path.join(src_backend, "app.py")):
+        return False
+    if os.path.normpath(project_root) == os.path.normpath(TEMPLATE_DIR):
+        return False
+    try:
+        # 1) 前端 dist 同步（所有副本：页面离线可用，免 npm）
+        src_dist = os.path.join(TEMPLATE_DIR, "frontend", "dist")
+        if os.path.isfile(os.path.join(src_dist, "index.html")):
+            dst_dist = os.path.join(project_root, "frontend", "dist")
+            os.makedirs(dst_dist, exist_ok=True)
+            _sh.copytree(src_dist, dst_dist, dirs_exist_ok=True)
+        # 2) backend 源码：仅自举副本整目录同步（跳过 __pycache__）
+        if os.path.normpath(project_root) == os.path.normpath(BOOTSTRAP_TARGET):
+            dst_backend = os.path.join(project_root, "backend")
+            os.makedirs(dst_backend, exist_ok=True)
+            for f in os.listdir(src_backend):
+                if f == "__pycache__":
+                    continue
+                s = os.path.join(src_backend, f)
+                d = os.path.join(dst_backend, f)
+                if os.path.isdir(s):
+                    _sh.copytree(s, d, dirs_exist_ok=True,
+                                 ignore=_sh.ignore_patterns("__pycache__"))
+                else:
+                    _sh.copy2(s, d)
+        print(f"[sync] 已从模板同步到 {project_root}（dist{' + backend' if os.path.normpath(project_root) == os.path.normpath(BOOTSTRAP_TARGET) else ''}）",
+              file=sys.stderr)
+        return True
+    except Exception as _e:  # noqa: BLE001 同步失败不阻断启动
+        print(f"[sync] 模板同步跳过（{_e}），继续使用现有副本", file=sys.stderr)
+        return False
+
+
 MOBILEEVAL_DIR = os.environ.get("MOBILEEVAL_HOME") or os.path.join(PROJECT_ROOT, "MobileEval")
 BACKEND_DIR = os.path.join(MOBILEEVAL_DIR, "backend")
 RUNS_DIR = os.path.join(MOBILEEVAL_DIR, "eval-data", "runs")
@@ -163,26 +214,30 @@ def _install_npm_global(pkg, bin_name):
     return f"{pkg} 已自动安装"
 
 
-def ensure_deps(args=None):
+def ensure_deps(args=None, scope="web"):
     """检测并自动安装运行所需依赖：
 
     - flask（Python，网页后端）—— 缺失时 pip install
     - promptfoo（CLI，评测执行）—— 缺失时 npm install -g promptfoo
     - opencode（CLI，opencode:sdk provider）—— 缺失时 npm install -g opencode-ai
+
+    scope="web"：只保证 flask（start 启动网页必需，避免评测工具链阻塞启动）；
+    scope="eval"：额外保证 promptfoo/opencode（run-eval 评测执行前调用）。
     """
     done = []
     if not _flask_available():
         done.append(_install_flask())
     else:
         done.append("flask 已就绪")
-    if not _which("promptfoo"):
-        done.append(_install_npm_global("promptfoo", "promptfoo"))
-    else:
-        done.append("promptfoo 已就绪")
-    if not _which("opencode"):
-        done.append(_install_npm_global("opencode-ai", "opencode"))
-    else:
-        done.append("opencode 已就绪")
+    if scope == "eval":
+        if not _which("promptfoo"):
+            done.append(_install_npm_global("promptfoo", "promptfoo"))
+        else:
+            done.append("promptfoo 已就绪")
+        if not _which("opencode"):
+            done.append(_install_npm_global("opencode-ai", "opencode"))
+        else:
+            done.append("opencode 已就绪")
     return {"status": "ok", "deps": done}
 
 
@@ -276,24 +331,57 @@ def is_running(port=PORT):
     return _is_mobileeval(port)
 
 
+def _page_ok(port=PORT):
+    """健康检查通过 + 根路径真的返回 HTML 页面（而非“前端请用 Vite”JSON 提示）。
+
+    用于识别“后端起了但前端 dist 缺失”的残缺实例——这类实例应自动重启而非复用。
+    """
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=3) as resp:
+            if resp.status != 200:
+                return False
+            ctype = resp.headers.get("Content-Type", "")
+            body = resp.read(4096).decode("utf-8", errors="replace")
+            return ("text/html" in ctype) and ("<!doctype" in body.lower() or "<div id=\"root\"" in body)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _ensure_project():
     """需要 backend/runs 的命令先定位项目根（支持 MOBILEEVAL_HOME）。"""
     global MOBILEEVAL_DIR, BACKEND_DIR, RUNS_DIR
     root = resolve_project_root()
+    # 定位后用 skill 内置模板补齐运行副本（backend 仅自举副本整同步，dist 一律补），
+    # 确保评测中心是随包分发的权威版本，而不是陈旧/半旧的本地副本。
+    _sync_project_from_template(root)
     MOBILEEVAL_DIR = root
     BACKEND_DIR = os.path.join(root, "backend")
     RUNS_DIR = os.path.join(root, "eval-data", "runs")
 
 
 def _ensure_frontend_dist(project_root):
-    """确保前端构建产物存在：dist/index.html 缺失时自动用源码打包（npm install + build）。
+    """确保前端构建产物存在：dist/index.html 缺失时，优先从 skill 内置模板复制预构建 dist
+    （模板在安装目录，离线可用、秒级完成），模板也没有时才用源码打包（npm install + build）。
 
     返回 dist 目录是否可用；前端源码缺失时返回 True（只跑后端，页面不可用）。
     """
+    import shutil as _shutil
     fe_dir = os.path.join(project_root, "frontend")
     dist = os.path.join(fe_dir, "dist")
     if os.path.isfile(os.path.join(dist, "index.html")):
         return True
+    # 优先：从 skill 内置模板（安装目录）复制预构建 dist —— 免 npm、免网络、秒级可用
+    template_dist = os.path.join(TEMPLATE_DIR, "frontend", "dist")
+    if os.path.isfile(os.path.join(template_dist, "index.html")):
+        try:
+            print(f"[frontend] 目标缺少 dist，从模板复制预构建前端产物…", file=sys.stderr)
+            os.makedirs(dist, exist_ok=True)
+            _shutil.copytree(template_dist, dist, dirs_exist_ok=True)
+            if os.path.isfile(os.path.join(dist, "index.html")):
+                return True
+        except Exception as _e:  # noqa: BLE001 复制失败退回落源码打包
+            print(f"[frontend] 模板复制失败（{_e}），退回落源码打包", file=sys.stderr)
     if not os.path.isfile(os.path.join(fe_dir, "package.json")):
         print("[frontend] 前端源码缺失，仅提供后端 API（页面不可用）", file=sys.stderr)
         return True
@@ -303,12 +391,13 @@ def _ensure_frontend_dist(project_root):
     if not os.path.isdir(os.path.join(fe_dir, "node_modules")):
         print(f"[frontend] 首次运行，安装前端依赖（约 1-2 分钟）…", file=sys.stderr)
         r = subprocess.run([npm, "install"], cwd=fe_dir, capture_output=True, text=True,
-                           timeout=600)
+                           encoding="utf-8", errors="replace", timeout=600)
         if r.returncode != 0 or not os.path.isdir(os.path.join(fe_dir, "node_modules")):
             raise RuntimeError(f"npm install 失败：{r.stderr[-300:]}")
     print("[frontend] 未检测到构建产物，自动打包源码（npm run build）…", file=sys.stderr)
     r = subprocess.run(["npm.cmd" if os.name == "nt" else "npm", "run", "build"],
-                       cwd=fe_dir, capture_output=True, text=True, timeout=600)
+                       cwd=fe_dir, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=600)
     if r.returncode != 0 or not os.path.isfile(os.path.join(dist, "index.html")):
         raise RuntimeError(f"前端构建失败：{r.stderr[-300:]}")
     return True
@@ -321,11 +410,12 @@ def _start_backend(port=PORT):
         return True
     _ensure_frontend_dist(MOBILEEVAL_DIR)
     ensure_port_free(port)
-    ensure_deps()
+    ensure_deps(scope="web")   # start 只需 flask；promptfoo/opencode 留给 run-eval 前 ensure_deps(scope="eval")
     # 数据库迁移（幂等；仅需 sqlite，不依赖 flask）
     r = subprocess.run([sys.executable, "-c",
                         "import sys; sys.path.insert(0, '.'); from db import init_db; init_db()"],
-                       cwd=BACKEND_DIR, capture_output=True, text=True)
+                       cwd=BACKEND_DIR, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise RuntimeError(f"数据库初始化失败：{r.stderr[-300:]}")
     # 启动后端（独立进程，Windows 下不弹窗）。常驻模式：不绑定调用进程生命周期
@@ -333,7 +423,12 @@ def _start_backend(port=PORT):
     # 注入 MOBILEEVAL_PLUGIN：指向本 skill 真实目录，使后端能定位 expert_tools.py/run_eval.py
     # （workspace-local 部署时，bootstrap 把 mobileeval/ 复制到用户目录，原有 vendor/fallback 路径失效）。
     plugin_dir = os.path.normpath(os.path.join(SCRIPT_DIR, ".."))
-    env = dict(os.environ, MOBILEEVAL_PORT=str(port), MOBILEEVAL_PLUGIN=plugin_dir)
+    env = dict(os.environ, MOBILEEVAL_PORT=str(port), MOBILEEVAL_PLUGIN=plugin_dir,
+               PYTHONIOENCODING="utf-8")
+    # 后端日志落盘（不再 DEVNULL）：启动失败/运行异常时可从 eval-data/backend.log 诊断
+    log_dir = os.path.join(MOBILEEVAL_DIR, "eval-data")
+    os.makedirs(log_dir, exist_ok=True)
+    backend_log = os.path.join(log_dir, "backend.log")
     # 注入 AI 凭据：从数据库 models 表读取默认模型（用户在网页配置的 deepseek key），
     # 供 expert_tools.py 的 AI 生成路径（分析/生成 case/建议）使用。
     # 该路径走 Anthropic 兼容端点，DeepSeek 用 https://api.deepseek.com/anthropic + deepseek-chat。
@@ -365,13 +460,30 @@ def _start_backend(port=PORT):
     kwargs = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.Popen([sys.executable, "app.py"], cwd=BACKEND_DIR, env=env,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
-    for _ in range(30):
+    with open(backend_log, "w", encoding="utf-8", errors="replace") as lf:
+        proc = subprocess.Popen([sys.executable, "-B", "app.py"], cwd=BACKEND_DIR, env=env,
+                                stdout=lf, stderr=subprocess.STDOUT, **kwargs)
+    print(f"[start] 后端进程已拉起（PID {proc.pid}），等待就绪（日志：{backend_log}）…",
+          file=sys.stderr)
+    # 就绪探测放宽到 60s：首次启动可能需前端探测/杀软扫描/冷启动导入
+    for i in range(120):
         time.sleep(0.5)
         if is_running(port):
             return True
-    raise RuntimeError("后端启动超时，请查看 eval-data/ 下的日志或手动执行 python app.py 排查")
+        if i in (19, 39, 79, 119):
+            print(f"[start] 已等待 {(i + 1) * 0.5:.0f}s 尚未就绪，进程存活={proc.poll() is None}…",
+                  file=sys.stderr)
+    # 启动失败：把日志尾部（真实报错）带给调用方，而不是只抛一句"超时"
+    tail = ""
+    try:
+        with open(backend_log, encoding="utf-8", errors="replace") as fh:
+            tail = "".join(fh.readlines()[-25:])
+    except OSError:
+        pass
+    raise RuntimeError(
+        "后端启动超时（60s 内未通过健康检查）。后端日志尾部：\n" + (tail or "(日志为空)") +
+        "\n若日志显示端口占用/依赖缺失，请按提示处理后重试 start；"
+        "不要手动前台运行 python app.py（Flask 常驻会阻塞命令通道）。")
 
 
 def cmd_start(args):
@@ -379,8 +491,19 @@ def cmd_start(args):
     # 服务为常驻模式（不绑定调用进程生命周期）：OpenWork 的工具调用是独立 shell，
     # 命令返回后 shell 即退出，绑定会导致服务被误杀。重复调用直接复用，无需重启。
     if is_running(PORT):
-        return {"status": "already_running", "url": f"http://127.0.0.1:{PORT}", "port": PORT,
-                "options": _START_OPTIONS}
+        if _page_ok(PORT):
+            return {"status": "already_running", "url": f"http://127.0.0.1:{PORT}", "port": PORT,
+                    "options": _START_OPTIONS}
+        # 健康但页面缺失（旧副本/缺 dist 的残缺实例）：先停掉再用当前副本重启
+        print(f"[start] 检测到 7891 上存在旧版/无页面实例，重启以提供完整评测中心…",
+              file=sys.stderr)
+        owner = _port_owner_pid(PORT)
+        if owner:
+            _kill_pid(owner)
+            for _ in range(20):
+                time.sleep(0.5)
+                if _port_free(PORT):
+                    break
     _start_backend(PORT)
     return {"status": "started", "url": f"http://127.0.0.1:{PORT}", "port": PORT,
             "note": "服务常驻运行；重复 start 会复用；用 stop 命令停止",
@@ -673,6 +796,8 @@ def cmd_run_eval(args):
                          "action": "用户指定 model-id/version/agent-on/repeat/concurrency/experiment 后重跑 dry-run"},
                         {"key": "3", "label": "取消", "action": "本次不发起评测"},
                     ]}
+        # 非 dry-run（正式执行）才保证 promptfoo/opencode（start 只装 flask，避免启动阶段卡在 npm）
+        ensure_deps(scope="eval")
         concurrency = p["concurrency"]
         agent_on = p["agent_on"]
         version = p["version"]
@@ -785,6 +910,12 @@ def cmd_import_summary(args):
 # --------------------------------------------------------------------------- #
 
 def main(argv=None):
+    # 统一 UTF-8 输出：Windows 控制台默认 GBK，会让客户端（按 UTF-8 解析）看到乱码并误判失败
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
     ap = argparse.ArgumentParser(prog="mobileeval_ctl", description="MobileEval 控制工具")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -835,7 +966,7 @@ def main(argv=None):
     if args.cmd == "start":
         out = cmd_start(args)
     elif args.cmd == "deps":
-        out = ensure_deps()
+        out = ensure_deps(scope="eval")
     elif args.cmd == "status":
         out = cmd_status(args)
     elif args.cmd == "stop":

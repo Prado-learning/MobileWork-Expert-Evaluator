@@ -17,29 +17,53 @@ bridge_bp = Blueprint("expert_manager_bridge", __name__)
 
 
 def _skill_root():
-    """定位 mobilework-expert-manager 技能目录（本插件捆绑路径）。
+    """定位 mobilework-expert-manager 技能目录（独立安装，非本包内嵌）。
 
     查找顺序：
-    1. 环境变量 MOBILEEVAL_SKILLS_ROOT（显式指定 skills 根，如项目仓库 skills/ 目录）
-    2. 运行目录布局：<project>/skills/mobilework-expert-manager（模板复制后同根）
-    3. 项目源码布局：backend/ 上溯到插件 skills 根
+    1. 环境变量 MOBILEWORK_SKILLS_DIR（MobileWork 受控 shell 提供，如 <...>/skills）
+    2. MobileWork 技能安装目录：~/.mobilework-uat/skills、~/.mobilework/skills
+       （按当前环境 MOBILEWORK_ENV_NAME 优先，缺省按 uat → prod 探测）
+    3. 环境变量 MOBILEEVAL_SKILLS_ROOT（显式指定 skills 根，如项目仓库 skills/ 目录）
+    4. OpenWork 用户级：~/.agents/skills
+    5. 项目源码布局：<project>/skills 或 backend/ 上溯到插件 skills 根
     """
-    env = os.environ.get("MOBILEEVAL_SKILLS_ROOT")
-    if env:
-        c = os.path.abspath(os.path.join(env, "mobilework-expert-manager"))
-        if os.path.isfile(os.path.join(c, "SKILL.md")):
-            return c
+    candidates = []
+
+    skills_dir = os.environ.get("MOBILEWORK_SKILLS_DIR")
+    if skills_dir:
+        candidates.append(os.path.join(skills_dir, "mobilework-expert-manager"))
+
+    env_name = os.environ.get("MOBILEWORK_ENV_NAME", "").lower()
+    home_roots = []
+    if env_name in ("uat", "prod"):
+        home_roots.append(os.path.expanduser(f"~/.mobilework-{env_name}/skills") if env_name == "uat"
+                          else os.path.expanduser("~/.mobilework/skills"))
+    home_roots += [os.path.expanduser("~/.mobilework-uat/skills"), os.path.expanduser("~/.mobilework/skills")]
+    for root in home_roots:
+        if root not in candidates:
+            candidates.append(os.path.join(root, "mobilework-expert-manager"))
+
+    eval_root = os.environ.get("MOBILEEVAL_SKILLS_ROOT")
+    if eval_root:
+        candidates.append(os.path.abspath(os.path.join(eval_root, "mobilework-expert-manager")))
+
+    candidates.append(os.path.expanduser("~/.agents/skills/mobilework-expert-manager"))
+
     here = os.path.dirname(os.path.abspath(__file__))
     # backend/api/ -> backend/ -> <project root>/（MobileEval 模板布局）
     run_root = os.path.abspath(os.path.join(here, "..", ".."))
-    c = os.path.join(run_root, "skills", "mobilework-expert-manager")
-    if os.path.isfile(os.path.join(c, "SKILL.md")):
-        return c
+    candidates.append(os.path.join(run_root, "skills", "mobilework-expert-manager"))
     # 项目源码布局（backend -> mobileeval -> skill 目录 -> 插件 skills 根）
-    for c in (
+    candidates += [
         os.path.abspath(os.path.join(here, "..", "..", "..", "..", "skills", "mobilework-expert-manager")),
         os.path.abspath(os.path.join(here, "..", "..", "..", "skills", "mobilework-expert-manager")),
-    ):
+    ]
+
+    seen = set()
+    for c in candidates:
+        if c in seen:
+            continue
+        seen.add(c)
         if os.path.isfile(os.path.join(c, "SKILL.md")):
             return c
     return None
@@ -47,7 +71,7 @@ def _skill_root():
 
 @bridge_bp.get("/expert-manager/status")
 def status():
-    """检查 manager 技能是否已捆绑到本插件。"""
+    """检查 mobilework-expert-manager 技能是否已安装（独立技能，非本包内嵌）。"""
     root = _skill_root()
     return jsonify({
         "bundled": root is not None,
@@ -72,7 +96,7 @@ def generate():
 
     skill_root = _skill_root()
     if not skill_root:
-        return jsonify({"error": "mobilework-expert-manager 技能未捆绑在本插件中（缺少 skills/mobilework-expert-manager/SKILL.md）"}), 500
+        return jsonify({"error": "未定位到已安装的 mobilework-expert-manager 技能（请先独立安装该技能）"}), 500
 
     prompt = _build_prompt(goal, kind, body.get("extra") or {})
     # 可选落库（chat_sessions 记录任务，便于页面/报告追溯）
@@ -98,7 +122,7 @@ def generate():
         "skill_root": skill_root,
         "prompt": prompt,
         "session_id": saved,
-        "hint": "把下方 prompt 复制到 OpenWork 对话框发送，agent 将加载 mobilework-expert-manager 技能执行。",
+        "hint": "把下方 prompt 复制到 OpenWork/MobileWork 对话框发送，agent 将加载已安装的 mobilework-expert-manager 技能执行。",
     })
 
 
@@ -112,8 +136,8 @@ def _build_prompt(goal, kind, extra):
     if extra.get("note"):
         detail += f"\n补充说明：{extra['note']}"
     return (
-        f"请加载本插件捆绑的 mobilework-expert-manager 技能"
-        f"（skills/mobilework-expert-manager/SKILL.md，脚本在其 scripts/ 目录），"
+        f"请加载已安装的 mobilework-expert-manager 技能"
+        f"（按其 SKILL.md 协议执行，脚本在其安装目录 scripts/ 下），"
         f"按其中协议帮我{verb}一个 OpenCode 格式的专家/专家团。\n\n"
         f"业务目标：{goal}{detail}\n\n"
         f"要求：先按技能的新手交互协议确认需求与方案，完整业务确认卡确认后再生成；"

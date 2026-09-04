@@ -35,15 +35,16 @@ def _search_ancestors():
 
 
 def _read_conf():
-    """读 skill 目录缓存（mobileeval_ctl 首次成功后写入的 .mobileeval-home.conf）。"""
-    try:
-        conf = os.path.join(os.path.dirname(SCRIPT_DIR), ".mobileeval-home.conf")
-        with open(conf, encoding="utf-8") as fh:
-            p = fh.read().strip()
-            if p and os.path.isfile(os.path.join(p, "eval-data", "mobileeval.db")):
-                return p
-    except OSError:
-        pass
+    """读项目根缓存。用户主目录 .mobileeval-home.conf 优先；兼容技能目录旧缓存（只读，不写技能目录）。"""
+    for conf in (os.path.join(os.path.expanduser("~"), ".mobileeval-home.conf"),
+                 os.path.join(os.path.dirname(SCRIPT_DIR), ".mobileeval-home.conf")):
+        try:
+            with open(conf, encoding="utf-8") as fh:
+                p = fh.read().strip()
+                if p and os.path.isfile(os.path.join(p, "eval-data", "mobileeval.db")):
+                    return p
+        except OSError:
+            continue
     return None
 
 

@@ -5,9 +5,46 @@ description: >-
   它能把模糊的业务需求整理成清楚的角色分工、工作步骤和所需资料，也能修复或迁移已有专家。
   需要补充能力时，会根据实际需要决定是否加入资料、技能、工具或外部连接，不会按角色数量机械生成。
   处理外部压缩包、附件或陌生目录时，默认只做安全检查，不运行其中的内容。
+metadata:
+  version: 1.0.0
+  mobilework:
+    authContractVersion: 1
+    authSkillId: mobilework-expert-manager
+    requires:
+      tools:
+        - mobilework_auth_request
+      env:
+        requiredAll: []
+        requiredAny: []
+        optional: []
+        purposes: {}
 ---
 
 # MobileWork 专家包管理器
+
+## MobileWork 授权执行约定（每次会话运行脚本前必须执行，双环境自适应）
+
+本技能按 MobileWork 技能接入协议（authContractVersion=1）运行，执行任何脚本前先完成授权握手，
+**在线版与离线版都适用**：
+
+1. **运行任何 python 命令之前**，先调用工具 `mobilework_auth_request`，输入严格为
+   `{"skill_id":"mobilework-expert-manager"}`（严格 JSON）。
+2. 把 Tool 返回字符串解析为 JSON，**仅当 `schema_version == 1 && ok == true && code == "AUTHORIZED"` 时**
+   才继续执行脚本；否则：
+   - `NOT_LOGGED_IN`/`TOKEN_EXPIRED`（含**离线版客户端无企业登录通道**的情形）→ 按第 3 条判定后
+     **允许离线降级执行**，不阻塞本技能纯本地动作；
+   - `UNKNOWN_SKILL`→核对环境与三处命名；`SKILL_PACKAGE_CHANGED`→等客户端同步后重调，
+   - 其余错误码如实展示，不猜测、不运行脚本、不要求用户手工输入凭证。
+3. **纯离线声明 + 离线降级条件**：本技能契约 `env` 全空——不声明、不读取任何受管业务变量
+   （JWT/工号/票据/随包密钥均不需要），授权失败**不会遗漏任何需注入的变量**。当第 2 条返回
+   未登录类错误时，判定当前为**离线模式**：向用户提示"离线模式：跳过授权"，然后**仅**执行纯本地动作
+   （创建/转换/编辑/校验本地专家包等）；**不得**执行任何需要企业身份/网关票据的动作，
+   也**禁止**从 `.env`/配置文件/用户输入"补值"兜底任何受管变量。
+4. 授权只在**当前 Agent 会话**内有效：换会话/账号/环境或包更新后都要重新调用 Tool；
+   同会话为其他技能再调 Tool 会覆盖本授权。
+5. **安装目录只读红线**：技能目录内禁止写入任何文件（含 `__pycache__`）——写入会使包摘要变化、
+   授权失效。**所有 python 一律以 `python -B` 执行**；日志、临时文件、生成的专家包写到用户目录或
+   工作区，不写技能目录、不打印/落盘任何凭证值；子进程继承环境变量，不传全新空 `env`。
 
 以 `expert.json` 为结构与资源所有权唯一事实源。根 `opencode.json`、README、Agent、Skill 和 `.opencode/**` 文件型资源都是可重建派生物。默认用中文沟通；业务标识、路径和代码保持原文。
 运行脚本需要 Python 3.10+ 和 PyYAML，以按官方规范解析 YAML frontmatter。
@@ -133,53 +170,53 @@ JSON proposal，不自行读写路径或声称生效。
 
 ```bash
 # 仅用于已确认执行或直接维护通道；纯咨询与设计确认阶段不运行。
-python <skill-root>/scripts/check_environment.py --feature core
-python <skill-root>/scripts/check_environment.py --feature all \
+python -B <skill-root>/scripts/check_environment.py --feature core
+python -B <skill-root>/scripts/check_environment.py --feature all \
   --sidecar <caller-reviewed-sidecar>
 
-python <skill-root>/scripts/create_expert.py --manifest <expert.json> --creation-target my-experts|workspace|custom [--output-dir <custom-parent>]
-python <skill-root>/scripts/validate_expert.py <package-dir> --format json
-python <skill-root>/scripts/diagnose_expert.py <unknown-dir-or-zip> --format json
-python <skill-root>/scripts/diagnose_skill.py <skill-dir-or-zip> --format json
-python <skill-root>/scripts/import_skill.py \
+python -B <skill-root>/scripts/create_expert.py --manifest <expert.json> --creation-target my-experts|workspace|custom [--output-dir <custom-parent>]
+python -B <skill-root>/scripts/validate_expert.py <package-dir> --format json
+python -B <skill-root>/scripts/diagnose_expert.py <unknown-dir-or-zip> --format json
+python -B <skill-root>/scripts/diagnose_skill.py <skill-dir-or-zip> --format json
+python -B <skill-root>/scripts/import_skill.py \
   --package-dir <package-dir> --skill <skill-dir-or-zip> \
   [--assign-to <agent-id> ... | --all-members]
-python <skill-root>/scripts/import_reference.py \
+python -B <skill-root>/scripts/import_reference.py \
   --package-dir <package-dir> --source <local-file-or-dir> \
   --alias <alias> --description <when-to-use> \
   [--assign-to <agent-id> ... | --all-members] --confirm
-python <skill-root>/scripts/scan_portable_artifacts.py <package-or-output>
+python -B <skill-root>/scripts/scan_portable_artifacts.py <package-or-output>
 
-python <skill-root>/scripts/install_expert.py \
+python -B <skill-root>/scripts/install_expert.py \
   --package-dir <package-dir> --workspace-dir <workspace> \
   [--format human|json] [--schema-version 1|2]
 # 仅在 force-only 输出确认过同一状态绑定 hash 后使用；四项缺一不可。
-python <skill-root>/scripts/install_expert.py \
+python -B <skill-root>/scripts/install_expert.py \
   --package-dir <package-dir> --workspace-dir <workspace> --force \
   --discard-drift --expected-drift-sha256 <preview-sha256> \
   --confirm-discard-drift <slug> \
   [--format human|json] [--schema-version 1|2]
-python <skill-root>/scripts/install_expert.py \
+python -B <skill-root>/scripts/install_expert.py \
   --restore-drift-backup <backup-id> --workspace-dir <workspace> \
   --expected-backup-sha256 <backup-sha256> \
   --confirm-restore-drift <slug> \
   [--format human|json] [--schema-version 1|2]
-python <skill-root>/scripts/install_expert.py \
+python -B <skill-root>/scripts/install_expert.py \
   --uninstall <slug> --workspace-dir <workspace> \
   [--format human|json] [--schema-version 1|2]
-python <skill-root>/scripts/verify_trusted_config.py \
+python -B <skill-root>/scripts/verify_trusted_config.py \
   --package-dir <package-dir> --workspace <installed-workspace> \
   --sidecar <explicit-caller-reviewed-sidecar> \
   --target-opencode-version <target-version> \
   [--host-contract <matching-host-contract.json>] \
   [--format human|json] [--schema-version 1|2]
 
-python <skill-root>/scripts/package_expert.py \
+python -B <skill-root>/scripts/package_expert.py \
   --package-dir <package-dir> --output-dir <dist-dir>
-python <skill-root>/scripts/plan_legacy_migration.py <legacy-dir-or-zip> --format json
-python <skill-root>/scripts/create_bundle_manifest.py \
+python -B <skill-root>/scripts/plan_legacy_migration.py <legacy-dir-or-zip> --format json
+python -B <skill-root>/scripts/create_bundle_manifest.py \
   --bundle-dir <bundle> --package-zip <package.zip>
-python <skill-root>/scripts/validate_expert_bundle.py <bundle>
+python -B <skill-root>/scripts/validate_expert_bundle.py <bundle>
 ```
 迁移答复必须原样给出 planner 的 RFC 6902 `candidateJsonPatch` 数组和机械 action 清单，不得只作自然语言概述或自行应用 patch；缺少真实输入时明确请求目录与 ZIP，并逐项承诺 Skills、`maxTurns`→`steps`、references 映射、权限变化、全部派生物重生成、根规则/Bash 业务确认，同时明确检查不 import 或执行包内 modules、commands、Plugins、MCP、lifecycle scripts。
 
@@ -209,13 +246,13 @@ CLI 自动当作仓库锁定产物。
 commit/tag。每次真实修改后先运行：
 
 ```bash
-python <skill-root>/scripts/version_expert.py --package-dir <package-dir>
+python -B <skill-root>/scripts/version_expert.py --package-dir <package-dir>
 ```
 
 向用户展示建议并询问。只有明确确认后才运行：
 
 ```bash
-python <skill-root>/scripts/version_expert.py \
+python -B <skill-root>/scripts/version_expert.py \
   --package-dir <package-dir> --version <X.Y.Z> --confirm
 ```
 

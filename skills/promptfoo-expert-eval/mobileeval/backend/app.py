@@ -1,5 +1,13 @@
 """MobileEval Flask 入口。"""
 import os
+import sys
+
+# 统一 UTF-8 输出：Windows 控制台默认 GBK，stdout/stderr 按 UTF-8 写避免日志乱码/误判
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
 
 from flask import Flask, jsonify, send_from_directory
 
